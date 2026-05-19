@@ -1,67 +1,108 @@
 FROM almalinux:9 AS builder
 
-RUN \
-        dnf -y update && \
-        dnf -y install epel-release dnf-plugins-core && \
-        dnf config-manager --set-enabled crb
+ARG OFFLINE=0
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG NO_PROXY
 
-RUN dnf -y install \
-        autoconf \
-        automake \
-        cargo \
-        cbindgen \
-        diffutils \
-        patch \
-        dpdk-devel \
-        elfutils-libelf-devel \
-        file \
-        file-devel \
-        gcc \
-        gcc-c++ \
-        git \
-        hiredis-devel \
-        jansson-devel \
-        jq \
-        libbpf-devel \
-        libtool \
-        libyaml-devel \
-        libnfnetlink-devel \
-        libnetfilter_queue-devel \
-        libnet-devel \
-        libcap-ng-devel \
-        libevent-devel \
-        libmaxminddb-devel \
-        libpcap-devel \
-        libprelude-devel \
-        libtool \
-        lz4-devel \
-        make \
-        numactl-devel \
-        pcre2-devel \
-        pkgconfig \
-        python3-devel \
-        python3-yaml \
-        rust \
-        which \
-        zlib-devel
+ENV HTTP_PROXY=${HTTP_PROXY} \
+    HTTPS_PROXY=${HTTPS_PROXY} \
+    NO_PROXY=${NO_PROXY}
 
-RUN if [ "$(arch)" = "x86_64" ]; then \
-    dnf -y install hyperscan-devel; \
-fi
+COPY /vendor /vendor
+
+RUN test "${OFFLINE}" = "1" || true
+
+RUN if [ "${OFFLINE}" != "1" ]; then \
+        echo "[builder 1/5] Configuring online repositories"; \
+        env | grep -i proxy || true; \
+        sed -ri 's/^mirrorlist=/# mirrorlist=/g; s|^# baseurl=https://repo.almalinux.org/almalinux/\$releasever|baseurl=https://mirrors.aliyun.com/almalinux/$releasever|g; s|^baseurl=https://repo.almalinux.org/almalinux/\$releasever|baseurl=https://mirrors.aliyun.com/almalinux/$releasever|g' /etc/yum.repos.d/almalinux*.repo; \
+        dnf -y --setopt=timeout=60 --setopt=retries=10 install epel-release dnf-plugins-core; \
+        sed -ri 's/^mirrorlist=/# mirrorlist=/g; s|^#baseurl=.*|baseurl=https://mirrors.aliyun.com/epel/\$releasever/Everything/\$basearch|g; s|^metalink=|# metalink=|g' /etc/yum.repos.d/epel*.repo; \
+        dnf config-manager --set-enabled crb; \
+    fi
+
+RUN if [ "${OFFLINE}" = "1" ]; then \
+        echo "[builder 2/5] Installing base certificates from offline RPMs"; \
+        dnf -y install \
+                --disablerepo='*' \
+                --repofrompath=local-builder,file:///vendor/rpms/builder \
+                --setopt=local-builder.gpgcheck=0 \
+                ca-certificates; \
+    else \
+        echo "[builder 2/5] Online base certificates already available"; \
+    fi
+
+RUN if [ "${OFFLINE}" = "1" ]; then \
+        echo "[builder 3/5] Installing build dependencies from offline RPMs"; \
+        dnf -y install \
+                --disablerepo='*' \
+                --repofrompath=local-builder,file:///vendor/rpms/builder \
+                --setopt=local-builder.gpgcheck=0 \
+                autoconf automake cargo cbindgen diffutils patch \
+                elfutils-libelf-devel file file-devel gcc gcc-c++ git \
+                jansson-devel jq libtool libyaml-devel libnet-devel \
+                libcap-ng-devel libevent-devel libpcap-devel \
+                libprelude-devel lz4-devel make pcre2-devel pkgconfig \
+                python3-devel python3-yaml rust which zlib-devel; \
+    else \
+        echo "[builder 3/5] Installing build dependencies from online repositories"; \
+        dnf -y --setopt=timeout=60 --setopt=retries=10 install \
+                autoconf automake cargo cbindgen diffutils patch \
+                elfutils-libelf-devel file file-devel gcc gcc-c++ git \
+                jansson-devel jq libtool libyaml-devel libnet-devel \
+                libcap-ng-devel libevent-devel libpcap-devel \
+                libprelude-devel lz4-devel make pcre2-devel pkgconfig \
+                python3-devel python3-yaml rust which zlib-devel; \
+    fi
+
+RUN if [ "$(arch)" = "x86_64" ] && [ "${OFFLINE}" = "1" ]; then \
+        echo "[builder 4/5] Installing hyperscan-devel from offline RPMs"; \
+        dnf -y install \
+                --disablerepo='*' \
+                --repofrompath=local-builder,file:///vendor/rpms/builder \
+                --setopt=local-builder.gpgcheck=0 \
+                hyperscan-devel; \
+    fi
+
+RUN if [ "$(arch)" = "x86_64" ] && [ "${OFFLINE}" != "1" ]; then \
+        echo "[builder 4/5] Installing hyperscan-devel from online repositories"; \
+        dnf -y --setopt=timeout=60 --setopt=retries=10 install hyperscan-devel; \
+    fi
 
 ARG VERSION
 
 WORKDIR /src
 
-RUN if [ "${VERSION}" = "master" ]; then \
-        git clone https://github.com/OISF/suricata.git suricata-${VERSION}; \
-        (cd suricata-${VERSION}/suricata-update && \
-                curl -L https://github.com/OISF/suricata-update/archive/master.tar.gz | tar zxf - --strip-components=1); \
+RUN if [ "${VERSION}" = "master" ] && [ "${OFFLINE}" = "1" ]; then \
+        echo "[builder 5/5] Unpacking master sources from offline assets"; \
+        mkdir -p suricata-${VERSION}; \
+        tar zxf /vendor/sources/suricata-master.tar.gz -C suricata-${VERSION} --strip-components=1; \
+        mkdir -p suricata-${VERSION}/suricata-update; \
+        tar zxf /vendor/sources/suricata-update-master.tar.gz -C suricata-${VERSION}/suricata-update --strip-components=1; \
         (cd suricata-${VERSION} && ./autogen.sh); \
-else \
+    fi
+
+RUN if [ "${VERSION}" = "master" ] && [ "${OFFLINE}" != "1" ]; then \
+        echo "[builder 5/5] Cloning master sources from upstream"; \
+        git clone https://github.com/OISF/suricata.git suricata-${VERSION}; \
+        mkdir -p suricata-${VERSION}/suricata-update; \
+        curl -L https://github.com/OISF/suricata-update/archive/master.tar.gz | \
+                tar zxf - -C suricata-${VERSION}/suricata-update --strip-components=1; \
+        (cd suricata-${VERSION} && ./autogen.sh); \
+    fi
+
+RUN if [ "${VERSION}" != "master" ] && [ "${OFFLINE}" = "1" ]; then \
+        echo "[builder 5/5] Unpacking release tarball from offline assets"; \
+        cp /vendor/sources/suricata-${VERSION}.tar.gz .; \
+        tar zxf suricata-${VERSION}.tar.gz; \
+    fi
+
+RUN if [ "${VERSION}" != "master" ] && [ "${OFFLINE}" != "1" ]; then \
+        echo "[builder 5/5] Downloading release tarball from upstream"; \
         curl -OL https://www.openinfosecfoundation.org/download/suricata-${VERSION}.tar.gz; \
         tar zxf suricata-${VERSION}.tar.gz; \
-fi
+    fi
 
 WORKDIR /src/suricata-${VERSION}
 
@@ -74,11 +115,6 @@ RUN ./configure \
         --prefix=/usr \
         --disable-shared \
         --disable-gccmarch-native \
-        --enable-nfqueue \
-        --enable-hiredis \
-        --enable-geoip \
-        --enable-ebpf \
-        --enable-dpdk \
         --enable-profiling-rules \
         ${CONFIGURE_ARGS}
 
@@ -99,42 +135,61 @@ RUN rm -rf /fakeroot/var
 
 FROM almalinux/9-base:latest AS runner
 
-RUN \
-        dnf -y update && \
-        dnf -y install epel-release && \
+ARG OFFLINE=0
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG NO_PROXY
+
+ENV HTTP_PROXY=${HTTP_PROXY} \
+    HTTPS_PROXY=${HTTPS_PROXY} \
+    NO_PROXY=${NO_PROXY}
+
+COPY /vendor /vendor
+
+RUN if [ "${OFFLINE}" != "1" ]; then \
+        echo "[runner 1/4] Configuring online repositories"; \
+        env | grep -i proxy || true; \
+        sed -ri 's/^mirrorlist=/# mirrorlist=/g; s|^# baseurl=https://repo.almalinux.org/almalinux/\$releasever|baseurl=https://mirrors.aliyun.com/almalinux/$releasever|g; s|^baseurl=https://repo.almalinux.org/almalinux/\$releasever|baseurl=https://mirrors.aliyun.com/almalinux/$releasever|g' /etc/yum.repos.d/almalinux*.repo; \
+        dnf -y --setopt=timeout=60 --setopt=retries=10 install epel-release; \
+        sed -ri 's/^mirrorlist=/# mirrorlist=/g; s|^#baseurl=.*|baseurl=https://mirrors.aliyun.com/epel/\$releasever/Everything/\$basearch|g; s|^metalink=|# metalink=|g' /etc/yum.repos.d/epel*.repo; \
+    fi
+
+RUN if [ "${OFFLINE}" = "1" ]; then \
+        echo "[runner 2/4] Installing runtime dependencies from offline RPMs"; \
         dnf -y install \
-        cronie \
-        dpdk \
-        elfutils-libelf \
-        file \
-        findutils \
-        hiredis \
-        iproute \
-        jansson \
-        libbpf \
-        libyaml \
-        libnfnetlink \
-        libnetfilter_queue \
-        libnet \
-        libcap-ng \
-        libevent \
-        libmaxminddb \
-        libpcap \
-        libprelude \
-        logrotate \
-        lz4 \
-        net-tools \
-        numactl \
-        pcre2 \
-        procps-ng \
-        python3 \
-        python3-yaml \
-        tcpdump \
-        which \
-        zlib && \
-        if [ "$(arch)" = "x86_64" ]; then dnf -y install hyperscan; fi && \
-        dnf clean all && \
-        find /etc/logrotate.d -type f -not -name suricata -delete
+                --disablerepo='*' \
+                --repofrompath=local-runner,file:///vendor/rpms/runner \
+                --setopt=local-runner.gpgcheck=0 \
+                cronie elfutils-libelf file findutils iproute jansson \
+                libyaml libnet libcap-ng libevent libpcap libprelude \
+                logrotate lz4 net-tools pcre2 procps-ng python3 \
+                python3-yaml tcpdump which zlib; \
+    else \
+        echo "[runner 2/4] Installing runtime dependencies from online repositories"; \
+        dnf -y --setopt=timeout=60 --setopt=retries=10 install \
+                cronie elfutils-libelf file findutils iproute jansson \
+                libyaml libnet libcap-ng libevent libpcap libprelude \
+                logrotate lz4 net-tools pcre2 procps-ng python3 \
+                python3-yaml tcpdump which zlib; \
+    fi
+
+RUN if [ "$(arch)" = "x86_64" ] && [ "${OFFLINE}" = "1" ]; then \
+        echo "[runner 3/4] Installing hyperscan from offline RPMs"; \
+        dnf -y install \
+                --disablerepo='*' \
+                --repofrompath=local-runner,file:///vendor/rpms/runner \
+                --setopt=local-runner.gpgcheck=0 \
+                hyperscan; \
+    fi
+
+RUN if [ "$(arch)" = "x86_64" ] && [ "${OFFLINE}" != "1" ]; then \
+        echo "[runner 3/4] Installing hyperscan from online repositories"; \
+        dnf -y --setopt=timeout=60 --setopt=retries=10 install hyperscan; \
+    fi
+
+RUN dnf clean all && \
+        find /etc/logrotate.d -type f -not -name suricata -delete && \
+        rm -rf /vendor
 
 COPY --from=builder /fakeroot /
 
@@ -144,7 +199,7 @@ RUN mkdir -p /var/log/suricata /var/run/suricata /var/lib/suricata
 COPY /update.yaml /etc/suricata/update.yaml
 COPY /suricata.logrotate /etc/logrotate.d/suricata
 
-RUN suricata-update update-sources
+RUN if [ "${OFFLINE}" != "1" ]; then suricata-update update-sources; fi
 
 RUN useradd --system --create-home suricata && \
         chown -R suricata:suricata /etc/suricata && \
@@ -163,4 +218,3 @@ COPY /docker-entrypoint.sh /
 ENTRYPOINT ["/docker-entrypoint.sh"]
 
 RUN /usr/bin/suricata --build-info
-
