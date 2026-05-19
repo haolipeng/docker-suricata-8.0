@@ -1,119 +1,74 @@
 FROM almalinux:9 AS builder
 
+ARG OFFLINE=0
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG NO_PROXY
+
+ENV HTTP_PROXY=${HTTP_PROXY} \
+    HTTPS_PROXY=${HTTPS_PROXY} \
+    NO_PROXY=${NO_PROXY}
+
 ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
 
-ARG OFFLINE=0
-
 COPY /vendor /vendor
+COPY /local-src /src/local-src
 
-RUN \
-        if [ "${OFFLINE}" = "1" ]; then \
-                dnf -y install \
-                        --disablerepo='*' \
-                        --repofrompath=local-builder,file:///vendor/rpms/builder \
-                        --setopt=local-builder.gpgcheck=0 \
-                        ca-certificates; \
-        else \
-                dnf -y install epel-release dnf-plugins-core && \
-                dnf config-manager --set-enabled crb; \
-        fi
-
-RUN if [ "${OFFLINE}" = "1" ]; then \
-        dnf -y install \
-                --disablerepo='*' \
-                --repofrompath=local-builder,file:///vendor/rpms/builder \
-                --setopt=local-builder.gpgcheck=0 \
-                autoconf \
-                automake \
-                cargo \
-                cbindgen \
-                diffutils \
-                patch \
-                dpdk-devel \
-                elfutils-libelf-devel \
-                file \
-                file-devel \
-                gcc \
-                gcc-c++ \
-                git \
-                hiredis-devel \
-                jansson-devel \
-                jq \
-                libbpf-devel \
-                libtool \
-                libyaml-devel \
-                libnfnetlink-devel \
-                libnetfilter_queue-devel \
-                libnet-devel \
-                libcap-ng-devel \
-                libevent-devel \
-                libmaxminddb-devel \
-                libpcap-devel \
-                libprelude-devel \
-                libtool \
-                lz4-devel \
-                make \
-                numactl-devel \
-                pcre2-devel \
-                pkgconfig \
-                python3-devel \
-                python3-yaml \
-                rust \
-                which \
-                zlib-devel; \
-else \
-        dnf -y install \
-                autoconf \
-                automake \
-                cargo \
-                cbindgen \
-                diffutils \
-                patch \
-                dpdk-devel \
-                elfutils-libelf-devel \
-                file \
-                file-devel \
-                gcc \
-                gcc-c++ \
-                git \
-                hiredis-devel \
-                jansson-devel \
-                jq \
-                libbpf-devel \
-                libtool \
-                libyaml-devel \
-                libnfnetlink-devel \
-                libnetfilter_queue-devel \
-                libnet-devel \
-                libcap-ng-devel \
-                libevent-devel \
-                libmaxminddb-devel \
-                libpcap-devel \
-                libprelude-devel \
-                libtool \
-                lz4-devel \
-                make \
-                numactl-devel \
-                pcre2-devel \
-                pkgconfig \
-                python3-devel \
-                python3-yaml \
-                rust \
-                which \
-                zlib-devel; \
-fi
-
-RUN if [ "$(arch)" = "x86_64" ]; then \
-    if [ "${OFFLINE}" = "1" ]; then \
-        dnf -y install \
-                --disablerepo='*' \
-                --repofrompath=local-builder,file:///vendor/rpms/builder \
-                --setopt=local-builder.gpgcheck=0 \
-                hyperscan-devel; \
-    else \
-        dnf -y install hyperscan-devel; \
+##############################配置仓库 ##################################
+# 在线构建改用镜像源，离线构建改用 vendor 里的本地 RPM 仓库。
+RUN set -eux; \
+    if [ "${OFFLINE}" != "1" ]; then \
+        echo "[builder 1/4] Configuring online repositories"; \
+        env | grep -i proxy || true; \
+        sed -ri 's/^mirrorlist=/# mirrorlist=/g; s|^# baseurl=https://repo.almalinux.org/almalinux/\$releasever|baseurl=https://mirrors.aliyun.com/almalinux/$releasever|g; s|^baseurl=https://repo.almalinux.org/almalinux/\$releasever|baseurl=https://mirrors.aliyun.com/almalinux/$releasever|g' /etc/yum.repos.d/almalinux*.repo; \
+        dnf -y --setopt=timeout=60 --setopt=retries=10 install epel-release dnf-plugins-core; \
+        sed -ri 's/^mirrorlist=/# mirrorlist=/g; s|^#baseurl=.*|baseurl=https://mirrors.aliyun.com/epel/\$releasever/Everything/\$basearch|g; s|^metalink=|# metalink=|g' /etc/yum.repos.d/epel*.repo; \
+        dnf config-manager --set-enabled crb; \
     fi; \
-fi
+    if [ "${OFFLINE}" = "1" ]; then \
+        echo "[builder 2/4] Installing base certificates from offline RPMs"; \
+        dnf -y install \
+                --disablerepo='*' \
+                --repofrompath=local-builder,file:///vendor/rpms/builder \
+                --setopt=local-builder.gpgcheck=0 \
+                ca-certificates; \
+    fi
+
+# 把待安装依赖列表存到builder_packages变量中，避免在线/离线两套安装清单漂移。
+RUN set -eux; \
+    builder_packages='autoconf automake cargo cbindgen diffutils patch \
+                elfutils-libelf-devel file file-devel gcc gcc-c++ git \
+                jansson-devel jq libtool libyaml-devel libnet-devel \
+                libcap-ng-devel libevent-devel libpcap-devel \
+                libprelude-devel lz4-devel make pcre2-devel pkgconfig \
+                python3-devel python3-yaml rust which zlib-devel'; \
+    if [ "${OFFLINE}" = "1" ]; then \
+        echo "[builder 3/4] Installing build dependencies from offline RPMs"; \
+        dnf -y install \
+                --disablerepo='*' \
+                --repofrompath=local-builder,file:///vendor/rpms/builder \
+                --setopt=local-builder.gpgcheck=0 \
+                ${builder_packages}; \
+    else \
+        echo "[builder 3/4] Installing build dependencies from online repositories"; \
+        dnf -y --setopt=timeout=60 --setopt=retries=10 install ${builder_packages}; \
+    fi
+
+# 安装 Hyperscan-devel 依赖（仅 x86_64）。
+RUN set -eux; \
+    if [ "$(arch)" = "x86_64" ]; then \
+        if [ "${OFFLINE}" = "1" ]; then \
+            echo "[builder 4/4] Installing hyperscan-devel from offline RPMs"; \
+            dnf -y install \
+                    --disablerepo='*' \
+                    --repofrompath=local-builder,file:///vendor/rpms/builder \
+                    --setopt=local-builder.gpgcheck=0 \
+                    hyperscan-devel; \
+        else \
+            echo "[builder 4/4] Installing hyperscan-devel from online repositories"; \
+            dnf -y --setopt=timeout=60 --setopt=retries=10 install hyperscan-devel; \
+        fi; \
+    fi
 
 ARG VERSION
 
@@ -121,15 +76,13 @@ WORKDIR /src
 
 RUN if [ "${VERSION}" = "master" ]; then \
         if [ "${OFFLINE}" = "1" ]; then \
-                mkdir -p suricata-${VERSION}; \
-                tar zxf /vendor/sources/suricata-master.tar.gz -C suricata-${VERSION} --strip-components=1; \
-                mkdir -p suricata-${VERSION}/suricata-update; \
-                tar zxf /vendor/sources/suricata-update-master.tar.gz -C suricata-${VERSION}/suricata-update --strip-components=1; \
+                cp -a /src/local-src/suricata-master suricata-${VERSION}; \
                 (cd suricata-${VERSION} && ./autogen.sh); \
         else \
                 git clone https://github.com/OISF/suricata.git suricata-${VERSION}; \
-                (cd suricata-${VERSION}/suricata-update && \
-                        curl -L https://github.com/OISF/suricata-update/archive/master.tar.gz | tar zxf - --strip-components=1); \
+                mkdir -p suricata-${VERSION}/suricata-update; \
+                curl -L https://github.com/OISF/suricata-update/archive/master.tar.gz | \
+                        tar zxf - -C suricata-${VERSION}/suricata-update --strip-components=1; \
                 (cd suricata-${VERSION} && ./autogen.sh); \
         fi; \
 else \
@@ -143,21 +96,13 @@ fi
 
 WORKDIR /src/suricata-${VERSION}
 
-COPY /profiling.patch /tmp/profiling.patch
-RUN patch -p1 < /tmp/profiling.patch
-
 ARG CONFIGURE_ARGS
 
+##############################编译安装 Suricata ##################################
 RUN ./configure \
         --prefix=/usr \
         --disable-shared \
         --disable-gccmarch-native \
-        --enable-nfqueue \
-        --enable-hiredis \
-        --enable-geoip \
-        --enable-ebpf \
-        --enable-dpdk \
-        --enable-profiling-rules \
         ${CONFIGURE_ARGS}
 
 ARG CORES=2
@@ -175,93 +120,64 @@ RUN make install install-conf DESTDIR=/fakeroot
 # next stage.
 RUN rm -rf /fakeroot/var
 
+##############################构建运行时镜像 ##################################
 FROM almalinux/9-base:latest AS runner
 
 ARG OFFLINE=0
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG NO_PROXY
+
+ENV HTTP_PROXY=${HTTP_PROXY} \
+    HTTPS_PROXY=${HTTPS_PROXY} \
+    NO_PROXY=${NO_PROXY}
 
 COPY /vendor /vendor
 
-RUN \
+# runner 阶段沿用同样的仓库策略，确保离线时也能装运行时依赖。
+RUN set -eux; \
+    if [ "${OFFLINE}" != "1" ]; then \
+        echo "[runner 1/3] Configuring online repositories"; \
+        env | grep -i proxy || true; \
+        sed -ri 's/^mirrorlist=/# mirrorlist=/g; s|^# baseurl=https://repo.almalinux.org/almalinux/\$releasever|baseurl=https://mirrors.aliyun.com/almalinux/$releasever|g; s|^baseurl=https://repo.almalinux.org/almalinux/\$releasever|baseurl=https://mirrors.aliyun.com/almalinux/$releasever|g' /etc/yum.repos.d/almalinux*.repo; \
+        dnf -y --setopt=timeout=60 --setopt=retries=10 install epel-release; \
+        sed -ri 's/^mirrorlist=/# mirrorlist=/g; s|^#baseurl=.*|baseurl=https://mirrors.aliyun.com/epel/\$releasever/Everything/\$basearch|g; s|^metalink=|# metalink=|g' /etc/yum.repos.d/epel*.repo; \
+    fi; \
+    runtime_packages='cronie elfutils-libelf file findutils iproute jansson \
+                libyaml libnet libcap-ng libevent libpcap libprelude \
+                logrotate lz4 net-tools pcre2 procps-ng python3 \
+                python3-yaml tcpdump which zlib'; \
+    if [ "${OFFLINE}" = "1" ]; then \
+        echo "[runner 2/3] Installing runtime dependencies from offline RPMs"; \
+        dnf -y install \
+                --disablerepo='*' \
+                --repofrompath=local-runner,file:///vendor/rpms/runner \
+                --setopt=local-runner.gpgcheck=0 \
+                ${runtime_packages}; \
+    else \
+        echo "[runner 2/3] Installing runtime dependencies from online repositories"; \
+        dnf -y --setopt=timeout=60 --setopt=retries=10 install ${runtime_packages}; \
+    fi
+
+# 仅在 x86_64 上安装 Hyperscan，其他架构不使用它。
+RUN set -eux; \
+    if [ "$(arch)" = "x86_64" ]; then \
         if [ "${OFFLINE}" = "1" ]; then \
-                dnf -y install \
-                        --disablerepo='*' \
-                        --repofrompath=local-runner,file:///vendor/rpms/runner \
-                        --setopt=local-runner.gpgcheck=0 \
-                        cronie \
-                        dpdk \
-                        elfutils-libelf \
-                        file \
-                        findutils \
-                        hiredis \
-                        iproute \
-                        jansson \
-                        libbpf \
-                        libyaml \
-                        libnfnetlink \
-                        libnetfilter_queue \
-                        libnet \
-                        libcap-ng \
-                        libevent \
-                        libmaxminddb \
-                        libpcap \
-                        libprelude \
-                        logrotate \
-                        lz4 \
-                        net-tools \
-                        numactl \
-                        pcre2 \
-                        procps-ng \
-                        python3 \
-                        python3-yaml \
-                        tcpdump \
-                        which \
-                        zlib; \
+            echo "[runner 3/3] Installing hyperscan from offline RPMs"; \
+            dnf -y install \
+                    --disablerepo='*' \
+                    --repofrompath=local-runner,file:///vendor/rpms/runner \
+                    --setopt=local-runner.gpgcheck=0 \
+                    hyperscan; \
         else \
-                dnf -y install epel-release && \
-                dnf -y install \
-                cronie \
-                dpdk \
-                elfutils-libelf \
-                file \
-                findutils \
-                hiredis \
-                iproute \
-                jansson \
-                libbpf \
-                libyaml \
-                libnfnetlink \
-                libnetfilter_queue \
-                libnet \
-                libcap-ng \
-                libevent \
-                libmaxminddb \
-                libpcap \
-                libprelude \
-                logrotate \
-                lz4 \
-                net-tools \
-                numactl \
-                pcre2 \
-                procps-ng \
-                python3 \
-                python3-yaml \
-                tcpdump \
-                which \
-                zlib; \
-        fi && \
-        if [ "$(arch)" = "x86_64" ]; then \
-                if [ "${OFFLINE}" = "1" ]; then \
-                        dnf -y install \
-                                --disablerepo='*' \
-                                --repofrompath=local-runner,file:///vendor/rpms/runner \
-                                --setopt=local-runner.gpgcheck=0 \
-                                hyperscan; \
-                else \
-                        dnf -y install hyperscan; \
-                fi; \
-        fi && \
-        dnf clean all && \
-        find /etc/logrotate.d -type f -not -name suricata -delete
+            echo "[runner 3/3] Installing hyperscan from online repositories"; \
+            dnf -y --setopt=timeout=60 --setopt=retries=10 install hyperscan; \
+        fi; \
+    fi
+
+RUN dnf clean all && \
+        find /etc/logrotate.d -type f -not -name suricata -delete && \
+        rm -rf /vendor
 
 COPY --from=builder /fakeroot /
 
@@ -271,6 +187,7 @@ RUN mkdir -p /var/log/suricata /var/run/suricata /var/lib/suricata
 COPY /update.yaml /etc/suricata/update.yaml
 COPY /suricata.logrotate /etc/logrotate.d/suricata
 
+# 离线构建跳过规则源刷新，因为这一步需要联网。
 RUN if [ "${OFFLINE}" != "1" ]; then suricata-update update-sources; fi
 
 RUN useradd --system --create-home suricata && \

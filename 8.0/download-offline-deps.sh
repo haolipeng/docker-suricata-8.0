@@ -7,7 +7,7 @@ VERSION_FILE="${SCRIPT_DIR}/VERSION"
 
 VERSION=$(cat "${VERSION_FILE}")
 ARCH="amd64"
-OUTPUT_DIR="${SCRIPT_DIR}/vendor"
+OUTPUT_DIR=""
 DOCKER_BIN="${DOCKER:-docker}"
 CLEAN="no"
 INCLUDE_MASTER_ASSETS="no"
@@ -20,16 +20,17 @@ Usage:
 Options:
   --arch <amd64|arm64>       Target architecture. Default: amd64
   --version <version>        Suricata version. Default: value from ./VERSION
-  --output-dir <path>        Output directory. Default: ./vendor
+  --output-dir <path>        Output directory. Default: ./vendor-<arch>
   --docker <path>            Docker CLI binary. Default: $DOCKER or docker
   --clean                    Remove existing output before download
   --include-master-assets    Also download master source archives
   -h, --help                 Show this help
 
 Examples:
-  ./download-offline-deps.sh
+  ./download-offline-deps.sh --arch amd64 --clean
   ./download-offline-deps.sh --arch arm64 --clean
   ./download-offline-deps.sh --version master --include-master-assets
+  ./link-vendor-for-build.sh amd64   # before offline docker build
 EOF
 }
 
@@ -83,6 +84,10 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+if [[ -z "${OUTPUT_DIR}" ]]; then
+    OUTPUT_DIR="${SCRIPT_DIR}/vendor-${ARCH}"
+fi
 
 case "${ARCH}" in
     amd64)
@@ -156,30 +161,23 @@ case "${ARCH}" in
             cbindgen
             diffutils
             patch
-            dpdk-devel
             elfutils-libelf-devel
             file
             file-devel
             gcc
             gcc-c++
             git
-            hiredis-devel
             jansson-devel
             jq
-            libbpf-devel
             libtool
             libyaml-devel
-            libnfnetlink-devel
-            libnetfilter_queue-devel
             libnet-devel
             libcap-ng-devel
             libevent-devel
-            libmaxminddb-devel
             libpcap-devel
             libprelude-devel
             lz4-devel
             make
-            numactl-devel
             pcre2-devel
             pkgconfig
             python3-devel
@@ -191,27 +189,20 @@ case "${ARCH}" in
         )
         RUNNER_PACKAGES=(
             cronie
-            dpdk
             elfutils-libelf
             file
             findutils
-            hiredis
             iproute
             jansson
-            libbpf
             libyaml
-            libnfnetlink
-            libnetfilter_queue
             libnet
             libcap-ng
             libevent
-            libmaxminddb
             libpcap
             libprelude
             logrotate
             lz4
             net-tools
-            numactl
             pcre2
             procps-ng
             python3
