@@ -1,4 +1,5 @@
-FROM almalinux:9 AS builder
+# builder阶段的镜像，采用完整 AlmaLinux 9，方便 dnf 装 gcc、rust、*-devel 等编译依赖
+FROM --platform=linux/arm64 almalinux:9 AS builder
 
 ARG OFFLINE=0
 ARG HTTP_PROXY
@@ -106,7 +107,8 @@ RUN make install install-conf DESTDIR=/fakeroot
 RUN rm -rf /fakeroot/var
 
 ##############################构建运行时镜像 ##################################
-FROM almalinux/9-base:latest AS runner
+# runner阶段的镜像，采用精简的 AlmaLinux 9-base，只包含运行时依赖，体积小
+FROM --platform=linux/arm64 almalinux/9-base:latest AS runner
 
 ARG OFFLINE=0
 ARG HTTP_PROXY
@@ -164,6 +166,7 @@ RUN dnf clean all && \
         find /etc/logrotate.d -type f -not -name suricata -delete && \
         rm -rf /vendor
 
+# 将Builder构建阶段生成的fakeroot目录复制到Runner运行时镜像中
 COPY --from=builder /fakeroot /
 
 # Create the directories that didn't get copied from the previous stage.

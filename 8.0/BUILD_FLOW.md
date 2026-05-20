@@ -26,6 +26,7 @@ cd /path/to/docker-suricata/8.0
 # 在线（默认；须先准备 local-src/suricata-master）
 ./prepare-local-master-src.sh /path/to/suricata-repo
 docker build \
+  --network=host \
   --progress=plain \
   --build-arg VERSION=$(cat VERSION) \
   --build-arg CORES=$(nproc) \
@@ -38,6 +39,7 @@ docker build \
 ./link-vendor-for-build.sh amd64
 ./prepare-local-master-src.sh /path/to/suricata-repo
 docker build \
+  --network=host \
   --progress=plain \
   --build-arg OFFLINE=1 \
   --build-arg VERSION=$(cat VERSION) \
@@ -51,6 +53,7 @@ docker build \
 ./link-vendor-for-build.sh arm64
 ./prepare-local-master-src.sh /path/to/suricata-repo
 docker build \
+  --network=host \
   --progress=plain \
   --platform linux/arm64 \
   --build-arg OFFLINE=1 \
@@ -77,6 +80,8 @@ docker build \
 | `CORES` | `2` | `make -j` 并行度 |
 | `CONFIGURE_ARGS` | 空 | 追加传给 `./configure` 的选项（profiling 镜像由 `build.sh` 注入） |
 | `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` | 空 | 构建阶段 `dnf`/`curl`/`git` 使用的代理 |
+
+构建时建议加 **`--network=host`**，避免中间容器走默认 `bridge`（需内核 veth）。定制内核若禁用 veth，不加此参数会在 `RUN` 步骤失败并报 `operation not supported`；见 §10。
 
 ## 3. 总体结构：双阶段
 
@@ -332,6 +337,7 @@ local-src/
 | 现象 | 可能原因 | 处理 |
 |------|----------|------|
 | `dnf` 长时间无输出 | Docker 缓冲日志 | `docker build --progress=plain` |
+| `failed to add ... veth ... operation not supported` | 内核禁用 veth，`bridge` 网络不可用 | `docker build --network=host`；`docker run` 用 `--network host` |
 | 在线装包很慢 | 默认国外源 | 已改阿里云；检查代理 |
 | 离线 `repofrompath` 失败 | 无 `repodata/` 或包不全 | 重跑 `download-offline-deps.sh --arch <arch> --clean` |
 | 离线装包架构错误 / 缺包 | 未 `link-vendor-for-build` 或 `vendor` 指向错误架构 | 对目标架构执行 `./link-vendor-for-build.sh amd64` 或 `arm64` 后再构建 |
