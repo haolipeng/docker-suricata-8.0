@@ -236,6 +236,19 @@ else
     DOWNLOAD_RELEASE_ASSET="yes"
 fi
 
+HOST_ARCH=$(uname -m)
+if [[ "${ARCH}" = "arm64" && "${HOST_ARCH}" != "aarch64" && "${HOST_ARCH}" != "arm64" ]]; then
+    if [[ ! -e /proc/sys/fs/binfmt_misc/qemu-aarch64 ]]; then
+        cat >&2 <<'EOF'
+error: arm64 containers require QEMU/binfmt emulation on this host.
+       Register qemu-aarch64 first, then rerun the script.
+       Example:
+         docker run --privileged --rm tonistiigi/binfmt --install arm64
+EOF
+        exit 1
+    fi
+fi
+
 docker_env_args=()
 for var_name in HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy; do
     if [[ -n "${!var_name-}" ]]; then
