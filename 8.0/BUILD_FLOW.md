@@ -135,7 +135,7 @@ dnf -y install \
 
 ### 4.3 源码获取 — `[builder 5/5]`
 
-由 `VERSION` 与 `OFFLINE` 组合决定，分四条互斥的 `RUN`：
+由 `VERSION` 与 `OFFLINE` 组合决定（单个 `RUN`，四分支互斥）：
 
 | `VERSION` | `OFFLINE` | 行为 |
 |-----------|-----------|------|

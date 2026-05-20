@@ -72,14 +72,16 @@ RUN set -eux; \
 
 ARG VERSION
 
-##############################下载项目源代码并解压 ##################################
+##############################获取项目源码 ##################################
 WORKDIR /src
 
 RUN if [ "${VERSION}" = "master" ]; then \
         if [ "${OFFLINE}" = "1" ]; then \
+                echo "[builder 5/5] Using local master sources from build context"; \
                 cp -a /src/local-src/suricata-master suricata-${VERSION}; \
                 (cd suricata-${VERSION} && ./autogen.sh); \
         else \
+                echo "[builder 5/5] Cloning master sources from upstream"; \
                 git clone https://github.com/OISF/suricata.git suricata-${VERSION}; \
                 mkdir -p suricata-${VERSION}/suricata-update; \
                 curl -L https://github.com/OISF/suricata-update/archive/master.tar.gz | \
@@ -88,8 +90,10 @@ RUN if [ "${VERSION}" = "master" ]; then \
         fi; \
 else \
         if [ "${OFFLINE}" = "1" ]; then \
+                echo "[builder 5/5] Unpacking release tarball from offline assets"; \
                 cp /vendor/sources/suricata-${VERSION}.tar.gz .; \
         else \
+                echo "[builder 5/5] Downloading release tarball from upstream"; \
                 curl -OL https://www.openinfosecfoundation.org/download/suricata-${VERSION}.tar.gz; \
         fi; \
         tar zxf suricata-${VERSION}.tar.gz; \
