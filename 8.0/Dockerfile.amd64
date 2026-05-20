@@ -65,7 +65,7 @@ RUN set -eux; \
                     --setopt=local-builder.gpgcheck=0 \
                     hyperscan-devel; \
         else \
-        echo "[builder 4/4] Installing hyperscan-devel from online repositories"; \
+            echo "[builder 4/4] Installing hyperscan-devel from online repositories"; \
             dnf -y --setopt=timeout=60 --setopt=retries=10 install hyperscan-devel; \
         fi; \
     fi
@@ -75,29 +75,9 @@ ARG VERSION
 ##############################获取项目源码 ##################################
 WORKDIR /src
 
-RUN if [ "${VERSION}" = "master" ]; then \
-        if [ "${OFFLINE}" = "1" ]; then \
-                echo "[builder 5/5] Using local master sources from build context"; \
-                cp -a /src/local-src/suricata-master suricata-${VERSION}; \
-                (cd suricata-${VERSION} && ./autogen.sh); \
-        else \
-                echo "[builder 5/5] Cloning master sources from upstream"; \
-                git clone https://github.com/OISF/suricata.git suricata-${VERSION}; \
-                mkdir -p suricata-${VERSION}/suricata-update; \
-                curl -L https://github.com/OISF/suricata-update/archive/master.tar.gz | \
-                        tar zxf - -C suricata-${VERSION}/suricata-update --strip-components=1; \
-                (cd suricata-${VERSION} && ./autogen.sh); \
-        fi; \
-else \
-        if [ "${OFFLINE}" = "1" ]; then \
-                echo "[builder 5/5] Unpacking release tarball from offline assets"; \
-                cp /vendor/sources/suricata-${VERSION}.tar.gz .; \
-        else \
-                echo "[builder 5/5] Downloading release tarball from upstream"; \
-                curl -OL https://www.openinfosecfoundation.org/download/suricata-${VERSION}.tar.gz; \
-        fi; \
-        tar zxf suricata-${VERSION}.tar.gz; \
-fi
+RUN echo "[builder 5/5] Using local sources from build context"; \
+    cp -a /src/local-src/suricata-master suricata-${VERSION}; \
+    (cd suricata-${VERSION} && ./autogen.sh)
 
 WORKDIR /src/suricata-${VERSION}
 
@@ -195,6 +175,8 @@ COPY /suricata.logrotate /etc/logrotate.d/suricata
 # 离线构建跳过规则源刷新，因为这一步需要联网。
 RUN if [ "${OFFLINE}" != "1" ]; then suricata-update update-sources; fi
 
+# 以suricata用户运行 Suricata；数据目录归suricata用户所有。
+# /etc/suricata.dist 保存镜像内默认配置，供docker-entrypoint.sh在首次启动时恢复或对比。
 RUN useradd --system --create-home suricata && \
         chown -R suricata:suricata /etc/suricata && \
         chown -R suricata:suricata /var/log/suricata && \
@@ -203,6 +185,7 @@ RUN useradd --system --create-home suricata && \
         cp -a /etc/suricata /etc/suricata.dist && \
         chmod 600 /etc/logrotate.d/suricata
 
+# 声明可挂载卷，便于持久化日志、规则库
 VOLUME /var/log/suricata
 VOLUME /var/lib/suricata
 VOLUME /var/run/suricata

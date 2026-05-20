@@ -23,7 +23,8 @@
 ```bash
 cd /path/to/docker-suricata/8.0
 
-# 在线（默认）
+# 在线（默认；须先准备 local-src/suricata-master）
+./prepare-local-master-src.sh /path/to/suricata-repo
 docker build \
   --progress=plain \
   --build-arg VERSION=$(cat VERSION) \
@@ -32,10 +33,10 @@ docker build \
   -t suricata:$(cat VERSION) \
   .
 
-# 离线（见 §6：分架构下载 + link-vendor-for-build）
+# 离线（见 §6：分架构下载 + link-vendor-for-build + 本地源码）
 ./download-offline-deps.sh --arch amd64 --clean
 ./link-vendor-for-build.sh amd64
-./prepare-local-master-src.sh /home/work/iot-sentinel   # 仅 VERSION=master 时需要
+./prepare-local-master-src.sh /path/to/suricata-repo
 docker build \
   --progress=plain \
   --build-arg OFFLINE=1 \
@@ -48,6 +49,7 @@ docker build \
 # 离线 arm64（先 link 到 vendor-arm64，并指定 platform）
 ./download-offline-deps.sh --arch arm64 --clean
 ./link-vendor-for-build.sh arm64
+./prepare-local-master-src.sh /path/to/suricata-repo
 docker build \
   --progress=plain \
   --platform linux/arm64 \
@@ -71,7 +73,7 @@ docker build \
 | 参数 | 默认 | 作用 |
 |------|------|------|
 | `OFFLINE` | `0` | `1` 时禁用在线仓库，从构建上下文 `vendor/rpms/*` 安装 RPM（离线前需 `./link-vendor-for-build.sh <arch>`，见 §6.1.1） |
-| `VERSION` | （必填） | Suricata 版本：`8.0.4` 等发行号，或 `master` 开发主线 |
+| `VERSION` | （必填） | 工作目录名与镜像标签（如 `8.0.4`、`master`）；**源码始终来自** `local-src/suricata-master` |
 | `CORES` | `2` | `make -j` 并行度 |
 | `CONFIGURE_ARGS` | 空 | 追加传给 `./configure` 的选项（profiling 镜像由 `build.sh` 注入） |
 | `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` | 空 | 构建阶段 `dnf`/`curl`/`git` 使用的代理 |
@@ -135,19 +137,16 @@ dnf -y install \
 
 ### 4.3 源码获取 — `[builder 5/5]`
 
-由 `VERSION` 与 `OFFLINE` 组合决定（单个 `RUN`，四分支互斥）：
+构建前须在上下文中准备 `local-src/suricata-master`（例如 `./prepare-local-master-src.sh <repo>`）。
 
-| `VERSION` | `OFFLINE` | 行为 |
-|-----------|-----------|------|
-| `master` | `1` | 使用构建上下文内的 `local-src/suricata-master`，执行 `./autogen.sh` |
-| `master` | `0` | `git clone` OISF/suricata，拉取 suricata-update 的 master tarball，`./autogen.sh` |
-| 发行号（如 `8.0.4`） | `1` | 复制并解压 `/vendor/sources/suricata-${VERSION}.tar.gz` |
-| 发行号 | `0` | `curl` 下载 `https://www.openinfosecfoundation.org/download/suricata-${VERSION}.tar.gz` |
+单个 `RUN` 步骤：
 
-工作目录：`/src/suricata-${VERSION}`。
+1. `cp -a /src/local-src/suricata-master` → `suricata-${VERSION}`
+2. 在源码目录执行 `./autogen.sh`
 
-- **`VERSION=master`**：GitHub 开发主线，不稳定，需 `autogen.sh`。
-- **`VERSION=8.0.4`**（`VERSION` 文件默认值）：官方发布 tarball，稳定发布流程。
+工作目录：`/src/suricata-${VERSION}`。`VERSION` 仅影响目录名与镜像 tag，**不**再从 `vendor` 或上游下载 tarball/git。
+
+在线与离线构建均依赖同一套本地源码树；离线时 `vendor` 只提供 RPM 仓库。
 
 ### 4.4 `./configure` 与编译
 
@@ -209,12 +208,9 @@ rm -rf /vendor
 ./download-offline-deps.sh --arch amd64 --clean
 ./download-offline-deps.sh --arch arm64 --clean
 
-# 构建前：把 vendor 指到当前要编的架构
+# 构建前：把 vendor 指到当前要编的架构，并准备本地源码
 ./link-vendor-for-build.sh amd64    # 或 arm64
-
-# 若要构建 VERSION=master
-./download-offline-deps.sh --version master --include-master-assets --clean
-./prepare-local-master-src.sh /home/work/iot-sentinel
+./prepare-local-master-src.sh /path/to/suricata-repo
 ```
 
 脚本会：
@@ -223,7 +219,8 @@ rm -rf /vendor
 2. 默认输出到 `vendor-<arch>/`（如 `vendor-amd64`），**不会**与另一架构混在同一目录。
 3. `dnf download --resolve` 到 `vendor-<arch>/rpms/builder` 与 `vendor-<arch>/rpms/runner`。
 4. 对每个目录执行 `createrepo_c` 生成 `repodata/`。
-5. 下载 `vendor-<arch>/sources/` 下对应 tarball。
+
+Suricata 源码不在 `vendor` 中，须单独放入 `local-src/suricata-master`。
 
 `amd64` / `arm64` 的包列表分别与对应 Dockerfile 中 `builder_packages` / `runtime_packages` **对齐**（`hyperscan-devel` / `hyperscan` 仅写在 **amd64** 脚本数组中；arm64 不含 Hyperscan）。
 
@@ -241,8 +238,8 @@ amd64 与 arm64 的 RPM **不能**混在同一目录：[`download-offline-deps.s
 
 | 目录 | 内容 |
 |------|------|
-| `vendor-amd64/` | 仅 amd64 的 `rpms/*` 与 `sources/*` |
-| `vendor-arm64/` | 仅 arm64 的 `rpms/*` 与 `sources/*` |
+| `vendor-amd64/` | 仅 amd64 的 `rpms/*` |
+| `vendor-arm64/` | 仅 arm64 的 `rpms/*` |
 
 而 Dockerfile 中路径是固定的：
 
@@ -279,26 +276,25 @@ ln -sfn vendor-amd64 vendor    # 或 vendor-arm64
 ```text
 vendor-amd64/              # ./download-offline-deps.sh --arch amd64
 vendor-arm64/              # ./download-offline-deps.sh --arch arm64
-├── rpms/
-│   ├── builder/           # 该架构编译 RPM + repodata/
-│   └── runner/            # 该架构运行 RPM + repodata/
-└── sources/
-    ├── suricata-8.0.4.tar.gz
-    └── ...
+└── rpms/
+    ├── builder/           # 该架构编译 RPM + repodata/
+    └── runner/            # 该架构运行 RPM + repodata/
 
 vendor -> vendor-amd64     # ./link-vendor-for-build.sh amd64（构建前）
 # 或 vendor -> vendor-arm64
 
 local-src/
-└── suricata-master/       # VERSION=master 且 OFFLINE=1 时需要
+└── suricata-master/       # 所有构建均需要（在线/离线）
 ```
 
 ### 6.3 离线构建注意点
 
 - 构建命令必须 `--build-arg OFFLINE=1`。
 - 构建前必须对目标架构执行 `./link-vendor-for-build.sh <amd64|arm64>`，保证 `COPY /vendor` 指向正确的 `vendor-<arch>`。
+- 必须准备 `local-src/suricata-master`（与是否离线无关，见 §4.3）。
 - 不会执行 `suricata-update update-sources`；规则源需自行维护或在线环境初始化后挂载。
 - 本地仓必须带 `repodata/`，否则 `--repofrompath` 失败。
+- 若曾用旧版脚本下载过 `vendor-*/sources/`，可安全删除以减小构建上下文。
 
 ## 7. `docker-entrypoint.sh`
 
@@ -340,8 +336,8 @@ local-src/
 | 离线 `repofrompath` 失败 | 无 `repodata/` 或包不全 | 重跑 `download-offline-deps.sh --arch <arch> --clean` |
 | 离线装包架构错误 / 缺包 | 未 `link-vendor-for-build` 或 `vendor` 指向错误架构 | 对目标架构执行 `./link-vendor-for-build.sh amd64` 或 `arm64` 后再构建 |
 | Hyperscan 检查失败 | 非 x86_64 或包未装上 | 仅在 amd64 需要；arm64 跳过该 `RUN` |
-| `master` 构建失败 | 无 GitHub/无离线包 | 在线需网络；离线需 master 两个 tarball |
+| 构建失败：找不到源码 | 无 `local-src/suricata-master` | 运行 `prepare-local-master-src.sh` |
 
 ## 11. 一句话总结
 
-**在 AlmaLinux 9 的 builder 阶段编译 Suricata（支持在线阿里云源或离线 `vendor` RPM 仓），将 `/fakeroot` 与精简后的运行时依赖装入 runner 镜像，由 entrypoint 完成权限与默认配置初始化；默认发行版为 `VERSION` 文件中的发布号（如 `8.0.4`），可选 `master` 开发构建。**
+**在 AlmaLinux 9 的 builder 阶段从 `local-src/suricata-master` 编译 Suricata（在线阿里云源或离线 `vendor` RPM 仓），将 `/fakeroot` 与精简后的运行时依赖装入 runner 镜像，由 entrypoint 完成权限与默认配置初始化；`VERSION` 用于目录名与镜像 tag（默认见 `VERSION` 文件，如 `8.0.4`）。**
