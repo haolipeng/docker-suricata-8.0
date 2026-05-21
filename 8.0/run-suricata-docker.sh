@@ -18,13 +18,14 @@ mkdir -p /var/log/suricata-docker /var/lib/suricata-docker /var/run/suricata-doc
 # 若同名容器已存在，先清理旧容器，保证脚本重复执行结果一致。
 docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
 
-# 使用宿主机网络命名空间；NET_ADMIN 和 SYS_NICE 分别用于抓包和调度优化。
+# 使用宿主机网络命名空间；NET_RAW/NET_ADMIN 用于抓包，SYS_NICE 用于调度优化。
 # Suricata 参数直接传给 entrypoint，避免通过环境变量拼接命令行。
 docker run -d \
     --name "${CONTAINER_NAME}" \
     --restart unless-stopped \
     --network host \
     --cap-add NET_ADMIN \
+    --cap-add NET_RAW \
     --cap-add SYS_NICE \
     -v /var/log/suricata-docker:/var/log/suricata \
     -v /var/lib/suricata-docker:/var/lib/suricata \
