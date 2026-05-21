@@ -18,7 +18,7 @@ fix_perms() {
 }
 
 for src in /etc/suricata.dist/*; do
-    filename=$(basename ${src})
+    filename=$(basename "${src}")
     dst="/etc/suricata/${filename}"
     if ! test -e "${dst}"; then
         echo "Creating ${dst}."
@@ -28,8 +28,8 @@ done
 
 # If the first command does not look like argument, assume its a
 # command the user wants to run. Normally I wouldn't do this.
-if [ $# -gt 0 -a "${1:0:1}" != "-" ]; then
-    exec $@
+if [[ $# -gt 0 && "${1:0:1}" != "-" ]]; then
+    exec "$@"
 fi
 
 run_as_user="yes"
@@ -54,13 +54,13 @@ if ! check_for_cap net_admin; then
     run_as_user="no"
 fi
 
-ARGS=""
+ARGS=()
 
 if [[ "${run_as_user}" != "yes" ]]; then
     echo "Warning: running as root due to missing capabilities" > /dev/stderr
 else
     fix_perms
-    ARGS="${ARGS} --user suricata --group suricata"
+    ARGS=(--user suricata --group suricata)
 fi
 
 # run helper processes
@@ -69,4 +69,4 @@ if [[ "$ENABLE_CRON" == "yes" ]]; then
 fi
 
 # run primary process
-exec /usr/bin/suricata ${ARGS} ${SURICATA_OPTIONS} $@
+exec /usr/bin/suricata "${ARGS[@]}" "$@"

@@ -1,4 +1,4 @@
-FROM almalinux:9 AS builder
+FROM --platform=linux/amd64 almalinux:9 AS builder
 
 ARG OFFLINE=0
 ARG HTTP_PROXY
@@ -106,7 +106,7 @@ RUN make install install-conf DESTDIR=/fakeroot
 RUN rm -rf /fakeroot/var
 
 ##############################构建运行时镜像 ##################################
-FROM almalinux/9-base:latest AS runner
+FROM --platform=linux/amd64 almalinux/9-base:latest AS runner
 
 ARG OFFLINE=0
 ARG HTTP_PROXY

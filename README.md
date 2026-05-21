@@ -187,6 +187,43 @@ options to Suricata. For example:
 docker run --net=host -e SURICATA_OPTIONS="-i eno1 -vvv" jasonish/suricata:latest
 ```
 
+For this repository, prefer a single standard launch template where the capture
+interface is selected at runtime instead of being written into
+`suricata.yaml`:
+
+```bash
+CAPTURE_IFACE=eth2
+docker run -d \
+    --name suricata \
+    --restart unless-stopped \
+    --network host \
+    --cap-add NET_ADMIN \
+    --cap-add SYS_NICE \
+    -e SURICATA_OPTIONS="-i ${CAPTURE_IFACE}" \
+    suricata:8.0.4-arm64-offline \
+    -c /etc/suricata/suricata.yaml
+```
+
+Parameter summary:
+
+- `CAPTURE_IFACE=eth2`: choose the host interface to inspect at startup.
+- `-d`: run the container in the background.
+- `--name suricata`: assign a fixed container name for `logs`, `exec`, and
+  restart operations.
+- `--restart unless-stopped`: automatically restart after daemon or host
+  restarts unless it was stopped manually.
+- `--network host`: share the host network namespace so Suricata can inspect
+  the host's physical interface directly.
+- `--cap-add NET_ADMIN`: grant the network administration capability required
+  by packet capture related operations.
+- `--cap-add SYS_NICE`: allow scheduling and priority adjustments used by
+  Suricata.
+- `-e SURICATA_OPTIONS="-i ${CAPTURE_IFACE}"`: pass the runtime capture
+  interface to Suricata without modifying `suricata.yaml`.
+- `suricata:8.0.4-arm64-offline`: image name and tag to run.
+- `-c /etc/suricata/suricata.yaml`: use the static main configuration file for
+  rules, outputs, and other non-interface settings.
+
 ## Suricata-Update
 
 The easiest way to run Suricata-Update is to run it while the

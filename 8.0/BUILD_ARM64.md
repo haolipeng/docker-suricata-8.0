@@ -68,10 +68,12 @@ docker build \
 
 ## 在线构建
 
-需要能访问外网（拉基础镜像、`dnf` 装包）。
+需要能访问外网（拉基础镜像、`dnf` 装包）。当前 Dockerfile 会固定复制 `vendor` 目录，因此在线构建前也需要先确保 `vendor` 指向目标架构目录。
 
 ```bash
 cd "${DOCKER_SURICATA_8}"
+
+./link-vendor-for-build.sh arm64
 
 docker build \
   --network=host \
@@ -100,7 +102,7 @@ cd "${DOCKER_SURICATA_8}"
 docker run --rm -it suricata:$(cat VERSION)-arm64-offline suricata --build-info
 ```
 
-更完整的说明见 [BUILD_FLOW.md](BUILD_FLOW.md).
+amd64 步骤见 [BUILD_AMD64.md](BUILD_AMD64.md)。
 
 ## 无 veth 内核（定制内核 / 禁用 veth 模块）
 

@@ -1,23 +1,17 @@
 #!/usr/bin/env bash
-# 在目标机上运行 Suricata 容器，抓包网卡默认 eth1。
+# 启动 Suricata 容器。CAPTURE_IFACE 必填。数据目录见 SURICATA_DATA_ROOT（默认 /opt/suricata-docker）。
 set -euo pipefail
 
 SURICATA_IMAGE="${SURICATA_IMAGE:-suricata:8.0.4-arm64-offline}"
-CAPTURE_IFACE="${CAPTURE_IFACE:-eth1}"
+CAPTURE_IFACE="${CAPTURE_IFACE:-}"
 CONTAINER_NAME="${CONTAINER_NAME:-suricata}"
+SURICATA_DATA_ROOT="${SURICATA_DATA_ROOT:-/opt/suricata-docker}"
 
-if ! docker image inspect "${SURICATA_IMAGE}" >/dev/null 2>&1; then
-    echo "error: image not found: ${SURICATA_IMAGE}" >&2
-    echo "Set SURICATA_IMAGE to your imported tag, e.g. suricata:8.0-arm64" >&2
-    docker images suricata 2>/dev/null || true
-    exit 1
-fi
+[[ -n "${CAPTURE_IFACE}" ]] || { echo "error: CAPTURE_IFACE required (e.g. CAPTURE_IFACE=eth1)" >&2; exit 1; }
+docker image inspect "${SURICATA_IMAGE}" >/dev/null 2>&1 || { echo "error: image not found: ${SURICATA_IMAGE}" >&2; exit 1; }
+ip link show "${CAPTURE_IFACE}" >/dev/null 2>&1 || { echo "error: interface not found: ${CAPTURE_IFACE}" >&2; exit 1; }
 
-if ! ip link show "${CAPTURE_IFACE}" >/dev/null 2>&1; then
-    echo "warning: interface ${CAPTURE_IFACE} not found on host" >&2
-    ip -br link
-fi
-
+mkdir -p "${SURICATA_DATA_ROOT}"/{log,lib,run,etc}
 docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
 
 docker run -d \
@@ -26,18 +20,14 @@ docker run -d \
     --network host \
     --cap-add NET_ADMIN \
     --cap-add SYS_NICE \
-    --entrypoint /bin/bash \
+    -v "${SURICATA_DATA_ROOT}/log:/var/log/suricata" \
+    -v "${SURICATA_DATA_ROOT}/lib:/var/lib/suricata" \
+    -v "${SURICATA_DATA_ROOT}/run:/var/run/suricata" \
+    -v "${SURICATA_DATA_ROOT}/etc:/etc/suricata" \
     "${SURICATA_IMAGE}" \
-    -lc "
-set -e
-for f in /etc/suricata.dist/suricata.yaml /etc/suricata/suricata.yaml; do
-    if [ -f \"\$f\" ]; then
-        sed -i 's/interface: eth0/interface: ${CAPTURE_IFACE}/g' \"\$f\"
-    fi
-done
-exec /docker-entrypoint.sh -c /etc/suricata/suricata.yaml
-"
+    -i "${CAPTURE_IFACE}" \
+    -c /etc/suricata/suricata.yaml
 
-echo "Started ${CONTAINER_NAME} (image=${SURICATA_IMAGE}, iface=${CAPTURE_IFACE})"
+echo "Started ${CONTAINER_NAME} (iface=${CAPTURE_IFACE}, data=${SURICATA_DATA_ROOT})"
 sleep 2
 docker logs --tail 30 "${CONTAINER_NAME}" 2>&1 || true
