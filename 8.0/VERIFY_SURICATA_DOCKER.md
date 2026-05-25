@@ -108,7 +108,7 @@ Failed packets:            0
 统计事件类型：
 
 ```bash
-jq -r '.event_type? // empty' /var/log/suricata-docker/eve.json | sort | uniq -c
+jq -r '.event_type? // empty' /var/log/suricata-docker/eve*.json | sort | uniq -c
 ```
 
 期望看到类似：
@@ -130,7 +130,7 @@ jq -c 'select(.event_type == "iec61850_mms") |
   pdu_type: .iec61850_mms.pdu_type,
   direction: .iec61850_mms.direction,
   service: .iec61850_mms.service
-}' /var/log/suricata-docker/eve.json
+}' /var/log/suricata-docker/eve*.json
 ```
 
 如果没有 `iec61850_mms`，检查 TCP/102 是否被完整捕获：

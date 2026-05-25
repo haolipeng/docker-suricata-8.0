@@ -16,18 +16,20 @@ export SURICATA_SRC=/home/work/iot-sentinel
 | `DOCKER_SURICATA_8` | 构建上下文（`docker build` 的工作目录） |
 | `SURICATA_SRC` | Suricata 源码目录 |
 
-## 与 arm64 的差异
 
-| 项目 | amd64 | arm64 |
-|------|-------|-------|
-| Dockerfile | [`Dockerfile.amd64`](Dockerfile.amd64) | [`Dockerfile.arm64`](Dockerfile.arm64) |
-| 离线 vendor | `vendor-amd64` | `vendor-arm64` |
-| 镜像 tag（在线） | `suricata:$(cat VERSION)` | `suricata:$(cat VERSION)-arm64` |
-| 镜像 tag（离线） | `suricata:$(cat VERSION)-offline` | `suricata:$(cat VERSION)-arm64-offline` |
-| Hyperscan | builder / runner 均安装 | 不安装 |
-| 构建 `--platform` | **必须** `--platform linux/amd64`（`Dockerfile.amd64` 的 `FROM` 也已固定 amd64） | 需 `--platform linux/arm64` |
 
 ## 前置准备（在线、离线都需要）
+
+每次执行cp -a命令拷贝最新的项目源代码之前先清除下之前生成的，先执行如下命令
+
+```
+make clean
+make distclean
+```
+
+
+
+然后再执行
 
 ```bash
 cd "${DOCKER_SURICATA_8}"

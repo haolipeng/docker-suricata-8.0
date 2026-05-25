@@ -1,5 +1,6 @@
 #! /bin/bash
 
+# 容器入口脚本，初始化配置和目录权限，再以suricat用户启动
 set -e
 
 fix_perms() {

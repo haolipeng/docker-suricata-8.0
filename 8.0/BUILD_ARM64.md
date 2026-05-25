@@ -28,6 +28,8 @@ cp -a "${SURICATA_SRC}" local-src/suricata-master
 
 ## 离线构建
 
+在10.107.12.9这台arm实体机器上进行构建镜像。
+
 分两步：**先下载依赖（只需做一次）**，再 **构建镜像**。
 
 ### 1. 下载 arm64 离线 RPM（需联网，仅首次或依赖变更时）
@@ -41,12 +43,6 @@ cd "${DOCKER_SURICATA_8}"
 
 完成后应有 `vendor` → `vendor-arm64`，且内含 `vendor-arm64/rpms/builder` 与 `vendor-arm64/rpms/runner`。
 
-在 x86 机器上下载 arm64 包时，需已启用 QEMU：
-
-```bash
-docker run --privileged --rm tonistiigi/binfmt --install arm64
-```
-
 ### 2. 构建镜像（无需外网）
 
 ```bash
@@ -56,7 +52,6 @@ cd "${DOCKER_SURICATA_8}"
 
 docker build \
   --network=host \
-  --progress=plain \
   --platform linux/arm64 \
   --build-arg OFFLINE=1 \
   --build-arg VERSION=$(cat VERSION) \
@@ -77,7 +72,6 @@ cd "${DOCKER_SURICATA_8}"
 
 docker build \
   --network=host \
-  --progress=plain \
   --platform linux/arm64 \
   --build-arg VERSION=$(cat VERSION) \
   --build-arg CORES=$(nproc) \
@@ -102,7 +96,7 @@ cd "${DOCKER_SURICATA_8}"
 docker run --rm -it suricata:$(cat VERSION)-arm64-offline suricata --build-info
 ```
 
-amd64 步骤见 [BUILD_AMD64.md](BUILD_AMD64.md)。
+
 
 ## 无 veth 内核（定制内核 / 禁用 veth 模块）
 
