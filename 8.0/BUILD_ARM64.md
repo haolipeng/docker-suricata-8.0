@@ -18,6 +18,15 @@ export SURICATA_SRC=/home/work/iot-sentinel
 
 ## 前置准备（在线、离线都需要）
 
+每次执行 `cp -a` 拷贝最新源码前，先在 Suricata 源码目录清理上次构建产物：
+
+```
+make clean
+make distclean
+```
+
+然后再执行：
+
 ```bash
 cd "${DOCKER_SURICATA_8}"
 
@@ -28,7 +37,7 @@ cp -a "${SURICATA_SRC}" local-src/suricata-master
 
 ## 离线构建
 
-在10.107.12.9这台arm实体机器上进行构建镜像。
+在 **10.107.12.9** 这台 arm64 实体机上构建（下载依赖与 `docker build` 均在本机 native 完成，无需 QEMU）。
 
 分两步：**先下载依赖（只需做一次）**，再 **构建镜像**。
 
@@ -90,13 +99,29 @@ docker build \
 
 ## 运行镜像（示例）
 
+### 构建后自检
+
 ```bash
 cd "${DOCKER_SURICATA_8}"
 
-docker run --rm -it suricata:$(cat VERSION)-arm64-offline suricata --build-info
+IMG="suricata:$(cat VERSION)-arm64-offline"
+docker run --rm "${IMG}" suricata --build-info
 ```
 
+### 启动抓包服务
 
+正式运行请用 [`run-suricata-docker.sh`](run-suricata-docker.sh)（`--network host`、`NET_RAW`/`NET_ADMIN`、日志与配置目录挂载等已写好）。**`CAPTURE_IFACE` 必填**；镜像名用 `SURICATA_IMAGE` 与构建 tag 对齐：
+
+```bash
+cd "${DOCKER_SURICATA_8}"
+
+export SURICATA_IMAGE="suricata:$(cat VERSION)-arm64-offline"
+export CAPTURE_IFACE=eth1   # 改为本机抓包网卡
+
+./run-suricata-docker.sh
+```
+
+停止容器：[`stop-suricata-docker.sh`](stop-suricata-docker.sh)（`docker stop` 前**必须等待 30 秒**，默认 `WAIT_BEFORE_STOP=30`）。
 
 ## 无 veth 内核（定制内核 / 禁用 veth 模块）
 

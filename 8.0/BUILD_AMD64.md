@@ -54,8 +54,6 @@ cd "${DOCKER_SURICATA_8}"
 
 完成后应有 `vendor` → `vendor-amd64`，且内含 `vendor-amd64/rpms/builder` 与 `vendor-amd64/rpms/runner`（含 `hyperscan-devel` / `hyperscan`）。
 
-在 x86_64 宿主机上可直接下载 amd64 包，**无需** QEMU/binfmt。若在非 x86_64 机器上构建 amd64 镜像，需自行配置交叉构建环境并加上 `--platform linux/amd64`。
-
 ### 2. 构建镜像（无需外网）
 
 ```bash
@@ -65,7 +63,6 @@ cd "${DOCKER_SURICATA_8}"
 
 docker build \
   --network=host \
-  --progress=plain \
   --platform linux/amd64 \
   --build-arg OFFLINE=1 \
   --build-arg VERSION=$(cat VERSION) \
@@ -86,7 +83,6 @@ cd "${DOCKER_SURICATA_8}"
 
 docker build \
   --network=host \
-  --progress=plain \
   --platform linux/amd64 \
   --build-arg VERSION=$(cat VERSION) \
   --build-arg CORES=$(nproc) \
@@ -105,61 +101,32 @@ docker build \
 
 ## 运行镜像（示例）
 
-```bash
-cd "${DOCKER_SURICATA_8}"
-
-docker run --rm -it suricata:$(cat VERSION)-offline suricata --build-info
-```
-
-确认 Hyperscan 已启用（仅 amd64）：
-
-```bash
-docker run --rm suricata:$(cat VERSION)-offline suricata --build-info | grep -i hyperscan
-```
-
-抓包网口在启动时指定，见 [`run-suricata-docker.sh`](run-suricata-docker.sh)（需设置 `CAPTURE_IFACE`）。
-
-arm64 步骤见 [BUILD_ARM64.md](BUILD_ARM64.md)。
-
-## 平台混用修复（arm64 缓存被 amd64 构建误用）
-
-同一台 x86 机器上若先编过 arm64，本机 `almalinux:9` 可能变成 **arm64**，再编 amd64 会出现平台警告或极慢。按顺序执行：
+### 构建后自检
 
 ```bash
 cd "${DOCKER_SURICATA_8}"
 
-# 1. 确认并拉取 amd64 基础镜像
-docker image inspect almalinux:9 --format '{{.Architecture}}'   # 若为 arm64 即需修复
-docker pull --platform linux/amd64 almalinux:9
-docker pull --platform linux/amd64 almalinux/9-base:latest
-docker image inspect almalinux:9 --format '{{.Architecture}}'   # 应变为 amd64
-
-# 2. 离线 RPM 须指向 amd64
-./link-vendor-for-build.sh amd64
-
-# 3. 构建（必须带 --platform；Dockerfile.amd64 的 FROM 也已固定 linux/amd64）
-./link-vendor-for-build.sh amd64   # 离线时
-docker build \
-  --network=host \
-  --progress=plain \
-  --platform linux/amd64 \
-  --build-arg OFFLINE=1 \
-  --build-arg VERSION=$(cat VERSION) \
-  --build-arg CORES=$(nproc) \
-  -f Dockerfile.amd64 \
-  -t suricata:$(cat VERSION)-offline \
-  .
+IMG="suricata:$(cat VERSION)-offline"
+docker run --rm "${IMG}" suricata --build-info
+docker run --rm "${IMG}" suricata --build-info | grep -i hyperscan   # amd64 应能看到 Hyperscan
 ```
 
-若 `inspect` 仍为 `arm64`，删除 tag 后重拉：
+### 启动抓包服务
+
+正式运行请用 [`run-suricata-docker.sh`](run-suricata-docker.sh)（`--network host`、`NET_RAW`/`NET_ADMIN`、日志与配置目录挂载等已写好）。**`CAPTURE_IFACE` 必填**；镜像名用 `SURICATA_IMAGE` 与构建 tag 对齐：
 
 ```bash
-docker rmi almalinux:9 almalinux/9-base:latest 2>/dev/null || true
-docker pull --platform linux/amd64 almalinux:9
-docker pull --platform linux/amd64 almalinux/9-base:latest
+cd "${DOCKER_SURICATA_8}"
+
+export SURICATA_IMAGE="suricata:$(cat VERSION)-offline"
+export CAPTURE_IFACE=eth1   # 改为本机抓包网卡
+
+./run-suricata-docker.sh
 ```
 
-**以后**：amd64 始终 `--platform linux/amd64`；arm64 始终 `--platform linux/arm64`（见 [BUILD_ARM64.md](BUILD_ARM64.md)）。两套最终镜像 tag 已区分（`-arm64` / 无后缀），不会互相覆盖。
+停止容器：[`stop-suricata-docker.sh`](stop-suricata-docker.sh)（`docker stop` 前**必须等待 30 秒**，默认 `WAIT_BEFORE_STOP=30`）。
+
+
 
 ## 无 veth 内核（定制内核 / 禁用 veth 模块）
 
