@@ -1,6 +1,6 @@
 # Suricata Docker 镜像
 
-本仓库用于构建和运行 Suricata的 Docker 镜像，仓库地址为，当前主要维护Suricata 8.0.4，支持amd64 / arm64在线与离线构建。
+本仓库用于构建和运行 Suricata的 Docker 镜像，仓库地址为https://github.com/haolipeng/docker-suricata-8.0，当前主要维护Suricata 8.0稳定版本，支持amd64 / arm64在线与离线构建。
 
 ## 快速开始
 
@@ -9,7 +9,7 @@
 ```bash
 cd 8.0
 
-# CAPTURE_IFACE 必填，改为本机抓包网卡
+# CAPTURE_IFACE 必填，CAPTURE_IFACE改为本机抓包网卡
 export SURICATA_IMAGE="suricata:$(cat VERSION)-arm64-offline"   # 或 -amd64-offline
 export CAPTURE_IFACE=eth1
 
@@ -59,8 +59,10 @@ docker pull jasonish/suricata:6.0.4-arm64v8
 
 ```text
 suricata:8.0.4-amd64-offline
-suricata:8.0.4-arm64-offline
 suricata:8.0.4-amd64          # 在线构建
+
+suricata:8.0.4-arm64-offline
+
 suricata:8.0.4-arm64
 ```
 
