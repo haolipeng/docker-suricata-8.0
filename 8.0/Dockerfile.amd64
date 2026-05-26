@@ -169,7 +169,10 @@ COPY --from=builder /fakeroot /
 # Create the directories that didn't get copied from the previous stage.
 RUN mkdir -p /var/log/suricata /var/run/suricata /var/lib/suricata
 
+# 规则更新的配置文件复制到镜像中
 COPY /update.yaml /etc/suricata/update.yaml
+
+# 日志轮转的配置文件复制到镜像中
 COPY /suricata.logrotate /etc/logrotate.d/suricata
 
 # 离线构建跳过规则源刷新，因为这一步需要联网。
