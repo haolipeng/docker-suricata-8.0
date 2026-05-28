@@ -3,7 +3,7 @@
 set -euo pipefail
 
 # 可通过环境变量覆盖镜像名和容器名；抓包网卡必须显式指定，避免误抓默认网卡。
-SURICATA_IMAGE="${SURICATA_IMAGE:-suricata:8.0.4-offline}"
+SURICATA_IMAGE="${SURICATA_IMAGE:-suricata:8.0.4-arm64-offline}"
 CAPTURE_IFACE="${CAPTURE_IFACE:-}"
 CONTAINER_NAME="${CONTAINER_NAME:-suricata}"
 
@@ -13,6 +13,9 @@ docker image inspect "${SURICATA_IMAGE}" >/dev/null 2>&1 || { echo "error: image
 ip link show "${CAPTURE_IFACE}" >/dev/null 2>&1 || { echo "error: interface not found: ${CAPTURE_IFACE}" >&2; exit 1; }
 
 # 固定使用宿主机目录持久化 Suricata 的日志、规则/状态、运行时文件和配置。
+# 配置默认以宿主机 /etc/suricata-docker 为准：改 suricata.yaml 后 docker restart 即生效。
+# 若要用镜像内默认 suricata.yaml 覆盖宿主机文件，启动前 export SURICATA_USE_IMAGE_YAML=yes
+SURICATA_USE_IMAGE_YAML="${SURICATA_USE_IMAGE_YAML:-no}"
 mkdir -p /var/log/suricata-docker /var/lib/suricata-docker /var/run/suricata-docker /etc/suricata-docker
 
 # 若同名容器已存在，先清理旧容器，保证脚本重复执行结果一致。
@@ -31,6 +34,7 @@ docker run -d \
     -v /var/lib/suricata-docker:/var/lib/suricata \
     -v /var/run/suricata-docker:/var/run/suricata \
     -v /etc/suricata-docker:/etc/suricata \
+    -e "SURICATA_USE_IMAGE_YAML=${SURICATA_USE_IMAGE_YAML}" \
     "${SURICATA_IMAGE}" \
     -i "${CAPTURE_IFACE}" \
     -c /etc/suricata/suricata.yaml

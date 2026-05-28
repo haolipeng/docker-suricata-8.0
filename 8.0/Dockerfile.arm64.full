@@ -1,4 +1,3 @@
-# slim 版 arm64 镜像，目标体积 <500MB；完整版见 Dockerfile.arm64.full
 # builder阶段的镜像，采用完整 AlmaLinux 9，方便 dnf 装 gcc、rust、*-devel 等编译依赖
 FROM --platform=linux/arm64 almalinux:9 AS builder
 
@@ -20,7 +19,7 @@ COPY /local-src /src/local-src
 # 在线构建改用镜像源，离线构建改用 vendor 里的本地 RPM 仓库。
 RUN set -eux; \
     if [ "${OFFLINE}" != "1" ]; then \
-        echo "[builder 1/3] Configuring online repositories"; \
+        echo "[builder 1/4] Configuring online repositories"; \
         env | grep -i proxy || true; \
         sed -ri 's/^mirrorlist=/# mirrorlist=/g; s|^# baseurl=https://repo.almalinux.org/almalinux/\$releasever|baseurl=https://mirrors.aliyun.com/almalinux/$releasever|g; s|^baseurl=https://repo.almalinux.org/almalinux/\$releasever|baseurl=https://mirrors.aliyun.com/almalinux/$releasever|g' /etc/yum.repos.d/almalinux*.repo; \
         dnf -y --setopt=timeout=60 --setopt=retries=10 install epel-release dnf-plugins-core; \
@@ -28,7 +27,7 @@ RUN set -eux; \
         dnf config-manager --set-enabled crb; \
     fi; \
     if [ "${OFFLINE}" = "1" ]; then \
-        echo "[builder 2/3] Installing base certificates from offline RPMs"; \
+        echo "[builder 2/4] Installing base certificates from offline RPMs"; \
         dnf -y install \
                 --disablerepo='*' \
                 --repofrompath=local-builder,file:///vendor/rpms/builder \
@@ -37,24 +36,39 @@ RUN set -eux; \
     fi
 
 # 把待安装依赖列表存到builder_packages变量中，避免在线/离线两套安装清单漂移。
-# slim 版去掉 libprelude-devel、python3-devel、python3-yaml（Suricata 8 不再用 libprelude；规则更新在宿主机完成）。
 RUN set -eux; \
     builder_packages='autoconf automake cargo cbindgen diffutils patch \
-                elfutils-libelf-devel gcc gcc-c++ git \
+                elfutils-libelf-devel file file-devel gcc gcc-c++ git \
                 jansson-devel jq libtool libyaml-devel libnet-devel \
                 libcap-ng-devel libevent-devel libpcap-devel \
-                lz4-devel make pcre2-devel pkgconfig \
-                rust which zlib-devel'; \
+                libprelude-devel lz4-devel make pcre2-devel pkgconfig \
+                python3-devel python3-yaml rust which zlib-devel'; \
     if [ "${OFFLINE}" = "1" ]; then \
-        echo "[builder 3/3] Installing build dependencies from offline RPMs"; \
+        echo "[builder 3/4] Installing build dependencies from offline RPMs"; \
         dnf -y install \
                 --disablerepo='*' \
                 --repofrompath=local-builder,file:///vendor/rpms/builder \
                 --setopt=local-builder.gpgcheck=0 \
                 ${builder_packages}; \
     else \
-        echo "[builder 3/3] Installing build dependencies from online repositories"; \
+        echo "[builder 3/4] Installing build dependencies from online repositories"; \
         dnf -y --setopt=timeout=60 --setopt=retries=10 install ${builder_packages}; \
+    fi
+
+# 安装 Hyperscan-devel 依赖（仅 x86_64）。
+RUN set -eux; \
+    if [ "$(arch)" = "x86_64" ]; then \
+        if [ "${OFFLINE}" = "1" ]; then \
+            echo "[builder 4/4] Installing hyperscan-devel from offline RPMs"; \
+            dnf -y install \
+                    --disablerepo='*' \
+                    --repofrompath=local-builder,file:///vendor/rpms/builder \
+                    --setopt=local-builder.gpgcheck=0 \
+                    hyperscan-devel; \
+        else \
+            echo "[builder 4/4] Installing hyperscan-devel from online repositories"; \
+            dnf -y --setopt=timeout=60 --setopt=retries=10 install hyperscan-devel; \
+        fi; \
     fi
 
 ARG VERSION
@@ -62,16 +76,13 @@ ARG VERSION
 ##############################获取项目源码 ##################################
 WORKDIR /src
 
-RUN echo "[builder 4/4] Using local sources from build context"; \
+RUN echo "[builder 5/5] Using local sources from build context"; \
     cp -a /src/local-src/suricata-master suricata-${VERSION}; \
     (cd suricata-${VERSION} && ./autogen.sh)
 
 WORKDIR /src/suricata-${VERSION}
 
-# 默认关闭 Python/suricata-update；suricatasc/suricatactl 由 Rust 编译，不依赖 Python。
-# 关闭 libmagic、JA3/JA4（Suricata 8 的 Lua 为内嵌，无 --disable-lua，运行时可在 suricata.yaml 设 security.lua.allow-rules: no）。
-ARG CONFIGURE_ARGS="--disable-python --disable-suricata-update \
-        --disable-libmagic --disable-ja3 --disable-ja4"
+ARG CONFIGURE_ARGS
 
 ##############################编译安装 Suricata ##################################
 RUN ./configure \
@@ -84,13 +95,16 @@ ARG CORES=2
 
 RUN make -j "${CORES}"
 
+# Verify Hyperscan support is enabled.
+RUN if [ "$(arch)" = "x86_64" ]; then \
+    ./src/suricata --build-info | grep Hyperscan | grep yes; \
+fi
+
 RUN make install install-conf DESTDIR=/fakeroot
 
 # Something about the Docker mounts won't let us copy /var/run in the
 # next stage.
-# strip 可执行文件以减小最终镜像体积。
-RUN rm -rf /fakeroot/var && \
-    find /fakeroot/usr/bin -maxdepth 1 -type f -executable -exec strip {} + 2>/dev/null || true
+RUN rm -rf /fakeroot/var
 
 ##############################构建运行时镜像 ##################################
 # runner阶段的镜像，采用精简的 AlmaLinux 9-base，只包含运行时依赖，体积小
@@ -105,42 +119,52 @@ ENV HTTP_PROXY=${HTTP_PROXY} \
     HTTPS_PROXY=${HTTPS_PROXY} \
     NO_PROXY=${NO_PROXY}
 
-# runner：仅 COPY 离线 runner RPM 子目录（~50MB），勿 COPY 整个 vendor（~300MB+）。
-# 装包后删除 /opt/suricata-offline-rpms。
-# 在线构建也会 COPY 该目录（需 link-vendor-for-build.sh），但不走离线 dnf 路径。
-COPY vendor/rpms/runner /opt/suricata-offline-rpms
+COPY /vendor /vendor
 
-# runner：slim runtime 依赖均在 AlmaLinux base/appstream。
-# 离线构建仅从本地 RPM 仓安装，不配置在线源、不装 epel-release。
-# 在线构建才换镜像源并装 EPEL（个别包可能不在 base 里）。
+# runner 阶段沿用同样的仓库策略，确保离线时也能装运行时依赖。
 RUN set -eux; \
-    runtime_packages='jansson libyaml libnet libcap-ng libevent libpcap \
-                lz4 pcre2 zlib'; \
+    if [ "${OFFLINE}" != "1" ]; then \
+        echo "[runner 1/3] Configuring online repositories"; \
+        env | grep -i proxy || true; \
+        sed -ri 's/^mirrorlist=/# mirrorlist=/g; s|^# baseurl=https://repo.almalinux.org/almalinux/\$releasever|baseurl=https://mirrors.aliyun.com/almalinux/$releasever|g; s|^baseurl=https://repo.almalinux.org/almalinux/\$releasever|baseurl=https://mirrors.aliyun.com/almalinux/$releasever|g' /etc/yum.repos.d/almalinux*.repo; \
+        dnf -y --setopt=timeout=60 --setopt=retries=10 install epel-release; \
+        sed -ri 's/^mirrorlist=/# mirrorlist=/g; s|^#baseurl=.*|baseurl=https://mirrors.aliyun.com/epel/\$releasever/Everything/\$basearch|g; s|^metalink=|# metalink=|g' /etc/yum.repos.d/epel*.repo; \
+    fi; \
+    runtime_packages='cronie elfutils-libelf file findutils iproute jansson \
+                libyaml libnet libcap-ng libevent libpcap libprelude \
+                logrotate lz4 net-tools pcre2 procps-ng python3 \
+                python3-yaml tcpdump which zlib'; \
     if [ "${OFFLINE}" = "1" ]; then \
-        # --- 离线（OFFLINE=1）：不碰 AlmaLinux/EPEL 在线源 --- \
-        echo "[runner 1/2] Offline: skip AlmaLinux/EPEL repo setup"; \
-        echo "[runner 2/2] Installing runtime dependencies from offline RPMs"; \
-        # --disablerepo=* 关闭默认仓库；--repofrompath 仅用 /opt/suricata-offline-rpms \
+        echo "[runner 2/3] Installing runtime dependencies from offline RPMs"; \
         dnf -y install \
                 --disablerepo='*' \
-                --repofrompath=local-runner,file:///opt/suricata-offline-rpms \
+                --repofrompath=local-runner,file:///vendor/rpms/runner \
                 --setopt=local-runner.gpgcheck=0 \
                 ${runtime_packages}; \
     else \
-        # --- 在线：换阿里云源，必要时通过 EPEL 解析依赖 --- \
-        echo "[runner 1/2] Configuring online AlmaLinux and EPEL repositories"; \
-        env | grep -i proxy || true; \
-        # AlmaLinux 默认 repo 改为阿里云 baseurl \
-        sed -ri 's/^mirrorlist=/# mirrorlist=/g; s|^# baseurl=https://repo.almalinux.org/almalinux/\$releasever|baseurl=https://mirrors.aliyun.com/almalinux/$releasever|g; s|^baseurl=https://repo.almalinux.org/almalinux/\$releasever|baseurl=https://mirrors.aliyun.com/almalinux/$releasever|g' /etc/yum.repos.d/almalinux*.repo; \
-        dnf -y --setopt=timeout=60 --setopt=retries=10 install epel-release; \
-        # EPEL 同样指向阿里云，避免访问官方 metalink \
-        sed -ri 's/^mirrorlist=/# mirrorlist=/g; s|^#baseurl=.*|baseurl=https://mirrors.aliyun.com/epel/\$releasever/Everything/\$basearch|g; s|^metalink=|# metalink=|g' /etc/yum.repos.d/epel*.repo; \
-        echo "[runner 2/2] Installing runtime dependencies from online repositories"; \
+        echo "[runner 2/3] Installing runtime dependencies from online repositories"; \
         dnf -y --setopt=timeout=60 --setopt=retries=10 install ${runtime_packages}; \
-    fi; \
-    dnf clean all; \
-    rm -rf /usr/share/doc /usr/share/man /usr/share/info /usr/share/locale \
-           /var/cache/dnf /tmp/* /root/.cache /opt/suricata-offline-rpms
+    fi
+
+# 仅在 x86_64 上安装 Hyperscan，其他架构不安装。
+RUN set -eux; \
+    if [ "$(arch)" = "x86_64" ]; then \
+        if [ "${OFFLINE}" = "1" ]; then \
+            echo "[runner 3/3] Installing hyperscan from offline RPMs"; \
+            dnf -y install \
+                    --disablerepo='*' \
+                    --repofrompath=local-runner,file:///vendor/rpms/runner \
+                    --setopt=local-runner.gpgcheck=0 \
+                    hyperscan; \
+        else \
+            echo "[runner 3/3] Installing hyperscan from online repositories"; \
+            dnf -y --setopt=timeout=60 --setopt=retries=10 install hyperscan; \
+        fi; \
+    fi
+
+RUN dnf clean all && \
+        find /etc/logrotate.d -type f -not -name suricata -delete && \
+        rm -rf /vendor
 
 # 将Builder构建阶段生成的fakeroot目录复制到Runner运行时镜像中
 COPY --from=builder /fakeroot /
@@ -149,6 +173,10 @@ COPY --from=builder /fakeroot /
 RUN mkdir -p /var/log/suricata /var/run/suricata /var/lib/suricata
 
 COPY /update.yaml /etc/suricata/update.yaml
+COPY /suricata.logrotate /etc/logrotate.d/suricata
+
+# 离线构建跳过规则源刷新，因为这一步需要联网。
+RUN if [ "${OFFLINE}" != "1" ]; then suricata-update update-sources; fi
 
 # 以suricata用户运行 Suricata；数据目录归suricata用户所有。
 # /etc/suricata.dist 保存镜像内默认配置，供docker-entrypoint.sh在首次启动时恢复或对比。
@@ -157,7 +185,8 @@ RUN useradd --system --create-home suricata && \
         chown -R suricata:suricata /var/log/suricata && \
         chown -R suricata:suricata /var/lib/suricata && \
         chown -R suricata:suricata /var/run/suricata && \
-        cp -a /etc/suricata /etc/suricata.dist
+        cp -a /etc/suricata /etc/suricata.dist && \
+        chmod 600 /etc/logrotate.d/suricata
 
 # 声明可挂载卷，便于持久化日志、规则库
 VOLUME /var/log/suricata

@@ -175,10 +175,8 @@ case "${ARCH}" in
         )
         RUNNER_PACKAGES=(
             cronie
-            elfutils-libelf
             file
             findutils
-            iproute
             jansson
             libyaml
             libnet

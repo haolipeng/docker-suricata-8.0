@@ -1,51 +1,45 @@
 # Suricata 容器运行与 IEC61850/MMS 验证
 
-本文档用于验证已构建好的 `suricata:8.0.4-offline` 镜像。容器启动统一使用 `run-suricata-docker.sh` 脚本。
+本文档用于验证已构建好的 `suricata:8.0.4-arm64-offline` 镜像。容器启动统一使用 `run-suricata-docker.sh` 脚本。
 
-## 1. 进入目录
+## 1. 启动容器
 
-```bash
+进入目录
+
+```
 cd /home/work/docker-suricata/8.0
 ```
 
-## 2. 确认脚本包含 NET_RAW
 
-实时抓包需要 `NET_RAW`。先确认脚本中已经包含该 capability：
 
-```bash
-grep -n 'NET_RAW' run-suricata-docker.sh
-```
-
-期望看到：
-
-```text
---cap-add NET_RAW
-```
-
-## 3. 确认镜像存在
+`CAPTURE_IFACE` 必须设置为宿主机上的抓包网卡，例如 `eth3`。
 
 ```bash
-docker image inspect suricata:8.0.4-offline >/dev/null && echo "image ok"
+CAPTURE_IFACE=eth3 ./run-suricata-docker.sh
 ```
 
-## 4. 启动容器
+### 1.1 宿主机配置（suricata.yaml）
 
-`CAPTURE_IFACE` 必须设置为宿主机上的抓包网卡，例如 `ens33`。
+容器将 **`/etc/suricata-docker`** 挂载为 **`/etc/suricata`**。默认 **`SURICATA_USE_IMAGE_YAML=no`**：
+
+- **首次启动**：若宿主机尚无 `suricata.yaml`，entrypoint 从镜像内 `/etc/suricata.dist` 复制一份。
+- **日常改配置**：编辑宿主机文件后重启容器即可（Suricata 启动时重新读取 `-c` 指定路径）：
 
 ```bash
-CAPTURE_IFACE=ens33 ./run-suricata-docker.sh
+vi /etc/suricata-docker/suricata.yaml
+docker restart suricata
 ```
 
-脚本会固定挂载以下宿主机目录：
+- **从镜像恢复默认 suricata.yaml**（会覆盖宿主机手改）：
 
-```text
-/var/log/suricata-docker -> /var/log/suricata
-/var/lib/suricata-docker -> /var/lib/suricata
-/var/run/suricata-docker -> /var/run/suricata
-/etc/suricata-docker     -> /etc/suricata
+```bash
+SURICATA_USE_IMAGE_YAML=yes CAPTURE_IFACE=eth3 ./run-suricata-docker.sh
+# 或手动：docker run --rm --entrypoint cat suricata:TAG /etc/suricata.dist/suricata.yaml > /etc/suricata-docker/suricata.yaml
 ```
 
-## 5. 日志轮转（logrotate）
+镜像内模板路径 **`/etc/suricata.dist`** 仅作“出厂默认”备份，Suricata 进程不直接读该目录。
+
+## 2. 日志轮转（logrotate）
 
 仓库内模板见 [`suricata.logrotate`](suricata.logrotate)。容器内日志目录是 `/var/log/suricata`，**宿主机 logrotate 应写挂载后的路径** `/var/log/suricata-docker`。
 
@@ -81,7 +75,7 @@ CAPTURE_IFACE=ens33 ./run-suricata-docker.sh
 - `suricatasc` 需能访问 Suricata 的 Unix socket（默认常在 `/var/run/suricata/suricata-command.socket`）。本部署对应宿主机 **`/var/run/suricata-docker/suricata-command.socket`**；若命令在宿主机执行，可设置例如 `export SURICATA_SOCKET=/var/run/suricata-docker/suricata-command.socket`，或在 `postrotate` 里写 `suricatasc -c reopen-log-files` 前 `export` 该变量（以本机 `suricata.yaml` 中 `unix-command` 配置为准）。
 - 安装后可用 `logrotate -d /etc/logrotate.d/suricata` 做干跑检查，确认路径与 `postrotate` 无报错。
 
-## 6. 确认容器 capability
+## 3. 确认容器 capability
 
 ```bash
 docker inspect suricata --format '{{json .HostConfig.CapAdd}}'
@@ -93,7 +87,7 @@ docker inspect suricata --format '{{json .HostConfig.CapAdd}}'
 ["NET_ADMIN","NET_RAW","SYS_NICE"]
 ```
 
-## 7. 清理旧日志
+## 4. 清理旧日志
 
 清理旧日志，避免本次验证结果和历史日志混在一起：
 
@@ -104,13 +98,13 @@ rm -f /var/log/suricata-docker/eve.json \
       /var/log/suricata-docker/suricata.log
 ```
 
-## 8. 重启容器
+## 5. 重启容器
 
 ```bash
 docker restart suricata
 ```
 
-## 9. 确认 Suricata 已启动
+## 6. 确认 Suricata 已启动
 
 ```bash
 docker logs --tail 50 suricata
@@ -122,7 +116,7 @@ docker logs --tail 50 suricata
 Engine started.
 ```
 
-## 10. 慢速回放 MMS 流量
+## 7. 慢速回放 MMS 流量
 
 使用 `tcpreplay` 将测试 pcap 回放到启动容器时指定的网卡。建议先用 `--pps=1` 慢速回放，避免虚拟网卡环境下实时抓包不完整。
 
@@ -137,7 +131,7 @@ Successful packets:        22
 Failed packets:            0
 ```
 
-## 11. 查看 IEC61850/MMS 解析记录
+## 8. 查看 IEC61850/MMS 解析记录
 
 事件名是 `iec61850_mms`，不是 `iec61850`。
 

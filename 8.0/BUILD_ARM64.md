@@ -72,7 +72,7 @@ docker build \
 
 ## 在线构建
 
-需要能访问外网（拉基础镜像、`dnf` 装包）。当前 Dockerfile 会固定复制 `vendor` 目录，因此在线构建前也需要先确保 `vendor` 指向目标架构目录。
+需要能访问外网（拉基础镜像、`dnf` 装包）。runner 阶段会 `COPY vendor/rpms/runner`（约 50MB，装包后删除），因此构建前需 `./link-vendor-for-build.sh arm64` 确保 `vendor` 存在。
 
 ```bash
 cd "${DOCKER_SURICATA_8}"
