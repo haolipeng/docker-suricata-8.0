@@ -37,13 +37,11 @@ export CAPTURE_IFACE=eth1
 | `main` | git master 分支最新代码 |
 | `latest` | 最新正式发布版（当前为 8.0） |
 | `8.0` | 最新 8.0.x 补丁版 |
-| `7.0` | 最新 7.0.x 补丁版 |
 
 4.1.5 及更新版本均有对应的具体版本标签。示例：
 
 ```bash
 docker pull jasonish/suricata:latest
-docker pull jasonish/suricata:7.0.11
 ```
 
 不含 `amd64`、`arm64v8` 等架构后缀的标签为多架构 manifest，Docker 会自动选择合适架构。若需指定架构，可使用带架构后缀的标签，例如：
@@ -62,7 +60,6 @@ suricata:8.0.4-amd64-offline
 suricata:8.0.4-amd64          # 在线构建
 
 suricata:8.0.4-arm64-offline
-
 suricata:8.0.4-arm64
 ```
 
@@ -277,13 +274,6 @@ docker run --name=suricata --rm -it --network host \
 docker exec -it --user suricata suricata suricata-update -f
 ```
 
-## 树莓派
-
-镜像可在 Raspberry Pi OS 上使用，但因 Raspberry Pi OS 与 Docker 的兼容问题，日志时间戳可能不正确。可选修复：
-
-- 对 Docker 使用 `--privileged`
-- 从 backports 升级 `libseccomp2`
-
 ## 操作指南
 
 ### 初始化配置
@@ -337,14 +327,6 @@ docker build \
   -t "suricata:$(cat VERSION)-arm64-offline" \
   .
 ```
-
-### 在 x86_64 上交叉构建 ARM 镜像
-
-```bash
-docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
-```
-
-Arch Linux 可安装 `extra/qemu-user-static-binfmt`。
 
 ## 许可证
 

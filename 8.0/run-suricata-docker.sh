@@ -18,6 +18,23 @@ ip link show "${CAPTURE_IFACE}" >/dev/null 2>&1 || { echo "error: interface not 
 SURICATA_USE_IMAGE_YAML="${SURICATA_USE_IMAGE_YAML:-no}"
 mkdir -p /var/log/suricata-docker /var/lib/suricata-docker /var/run/suricata-docker /etc/suricata-docker
 
+# 容器 date / EVE timestamp 与宿主机一致：挂载宿主机时区，并传入 TZ（若可读）。
+EXTRA_DOCKER_OPTS=()
+if [[ -e /etc/localtime ]]; then
+    EXTRA_DOCKER_OPTS+=(-v /etc/localtime:/etc/localtime:ro)
+fi
+TZ_VALUE="${TZ:-}"
+if [[ -z "${TZ_VALUE}" && -r /etc/timezone ]]; then
+    TZ_VALUE=$(tr -d '[:space:]' < /etc/timezone)
+fi
+if [[ -z "${TZ_VALUE}" && -L /etc/localtime ]]; then
+    TZ_VALUE=$(readlink -f /etc/localtime)
+    TZ_VALUE="${TZ_VALUE#*/usr/share/zoneinfo/}"
+fi
+if [[ -n "${TZ_VALUE}" ]]; then
+    EXTRA_DOCKER_OPTS+=(-e "TZ=${TZ_VALUE}")
+fi
+
 # 若同名容器已存在，先清理旧容器，保证脚本重复执行结果一致。
 docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
 
@@ -30,6 +47,7 @@ docker run -d \
     --cap-add NET_ADMIN \
     --cap-add NET_RAW \
     --cap-add SYS_NICE \
+    ${EXTRA_DOCKER_OPTS[@]+"${EXTRA_DOCKER_OPTS[@]}"} \
     -v /var/log/suricata-docker:/var/log/suricata \
     -v /var/lib/suricata-docker:/var/lib/suricata \
     -v /var/run/suricata-docker:/var/run/suricata \
