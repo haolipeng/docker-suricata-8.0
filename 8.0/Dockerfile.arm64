@@ -1,6 +1,6 @@
 # slim 版 arm64 镜像，目标体积 <500MB；完整版见 Dockerfile.arm64.full
 # builder阶段的镜像，采用完整 AlmaLinux 9，方便 dnf 装 gcc、rust、*-devel 等编译依赖
-FROM --platform=linux/arm64 almalinux:9 AS builder
+FROM --platform=linux/arm64 almalinux:9.7 AS builder
 
 ARG OFFLINE=0
 ARG HTTP_PROXY
@@ -11,7 +11,8 @@ ENV HTTP_PROXY=${HTTP_PROXY} \
     HTTPS_PROXY=${HTTPS_PROXY} \
     NO_PROXY=${NO_PROXY}
 
-ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
+ENV CARGO_NET_GIT_FETCH_WITH_CLI=true \
+    CARGO_BUILD_JOBS=1
 
 COPY /vendor /vendor
 COPY /local-src /src/local-src
@@ -57,6 +58,18 @@ RUN set -eux; \
         dnf -y --setopt=timeout=60 --setopt=retries=10 install ${builder_packages}; \
     fi
 
+RUN mkdir -p /root/.cargo && \
+    printf '%s\n' \
+        '[source.crates-io]' \
+        'replace-with = "ustc"' \
+        '' \
+        '[source.ustc]' \
+        'registry = "sparse+https://mirrors.ustc.edu.cn/crates.io-index/"' \
+        '' \
+        '[net]' \
+        'git-fetch-with-cli = true' \
+        > /root/.cargo/config.toml
+
 ARG VERSION
 
 ##############################获取项目源码 ##################################
@@ -94,7 +107,7 @@ RUN rm -rf /fakeroot/var && \
 
 ##############################构建运行时镜像 ##################################
 # runner阶段的镜像，采用精简的 AlmaLinux 9-base，只包含运行时依赖，体积小
-FROM --platform=linux/arm64 almalinux/9-base:latest AS runner
+FROM --platform=linux/arm64 almalinux/9-base:9.7 AS runner
 
 ARG OFFLINE=0
 ARG HTTP_PROXY

@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# CAPTURE_IFACE=eth1 ./replay-pcaps.sh  （可选 PCAP_DIR MBPS，默认 100）
+# 示例：CAPTURE_IFACE=eth1 PCAP_DIR=/home/work/pcaps_dataset MBPS=5 ./replay-pcaps.sh
+# CAPTURE_IFACE 必填；PCAP_DIR 默认 /home/work/pcaps_dataset；MBPS 默认 5
 set -euo pipefail
 
 PCAP_DIR="${PCAP_DIR:-/home/work/pcaps_dataset}"
 CAPTURE_IFACE="${CAPTURE_IFACE:-}"
-MBPS="${MBPS:-100}"
+MBPS="${MBPS:-5}"
 
 # 检查环境，网卡必须存在，tcpreplay必须存在，pcap目录必须存在
 check_env() {

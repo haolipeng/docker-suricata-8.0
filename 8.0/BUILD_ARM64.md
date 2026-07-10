@@ -7,37 +7,52 @@
 ```bash
 export DOCKER_SURICATA_ROOT=/home/work/docker-suricata
 export DOCKER_SURICATA_8="${DOCKER_SURICATA_ROOT}/8.0"
-export SURICATA_SRC=/home/work/iot-sentinel
 ```
 
 | 变量 | 说明 |
 |------|------|
 | `DOCKER_SURICATA_ROOT` | 工程根目录 |
 | `DOCKER_SURICATA_8` | 构建上下文（`docker build` 的工作目录） |
-| `SURICATA_SRC` | Suricata 源码目录 |
 
-## 前置准备（在线、离线都需要）
+## AlmaLinux 9.7 基础镜像准备
 
-每次执行 `cp -a` 拷贝最新源码前，先在 Suricata 源码目录清理上次构建产物：
+当前 `vendor-arm64` 是 AlmaLinux `9.7` 版本线，Dockerfile 使用官方多架构 tag（`almalinux:9.7` / `almalinux/9-base:9.7`），由 `--platform` 选择架构。首次构建前可先拉取：
 
+```bash
+docker pull --platform linux/arm64 almalinux:9.7
+docker pull --platform linux/arm64 almalinux/9-base:9.7
 ```
+
+可用以下命令确认基础镜像架构正确：
+
+```bash
+docker run --rm --platform linux/arm64 almalinux:9.7 uname -m
+```
+
+预期输出 `aarch64`。
+
+## 前置准备（程序员手动执行）
+
+> **人工步骤**：以下命令由程序员在构建前自行执行；Agent / 自动化脚本不得代跑（源码路径与清理时机由人决定）。
+
+每次拷贝最新源码前，先在 Suricata 源码目录清理上次构建产物：
+
+```bash
 make clean
 make distclean
 ```
 
-然后再执行：
+然后再执行（将 `/path/to/suricata-src` 换成实际源码路径）：
 
 ```bash
 cd "${DOCKER_SURICATA_8}"
 
 mkdir -p local-src
 rm -rf local-src/suricata-master
-cp -a "${SURICATA_SRC}" local-src/suricata-master
+cp -a /path/to/suricata-src local-src/suricata-master
 ```
 
 ## 离线构建
-
-在 **10.107.12.9** 这台 arm64 实体机上构建（下载依赖与 `docker build` 均在本机 native 完成，无需 QEMU）。
 
 分两步：**先下载依赖（只需做一次）**，再 **构建镜像**。
 
@@ -52,7 +67,11 @@ cd "${DOCKER_SURICATA_8}"
 
 完成后应有 `vendor` → `vendor-arm64`，且内含 `vendor-arm64/rpms/builder` 与 `vendor-arm64/rpms/runner`。
 
-### 2. 构建镜像（无需外网）
+### 2. 构建镜像（RPM 依赖离线；Cargo crates 未 vendor 时仍可能需要外网）
+
+注意：`OFFLINE=1` 只表示 RPM 依赖从 `vendor-arm64` 安装；如果 Suricata/Rust 构建过程中需要下载 Cargo crates，且 crates 没有 vendor 到构建上下文，构建阶段仍可能访问外网。
+
+离线 RPM 仓库必须与基础镜像的 AlmaLinux 小版本一致。当前 `vendor-arm64` 是 AlmaLinux `9.7` 版本线，构建前请确认已按上文拉取 `almalinux:9.7` 与 `almalinux/9-base:9.7`（`--platform linux/arm64`），否则离线 `dnf` 可能因包版本漂移失败。
 
 ```bash
 cd "${DOCKER_SURICATA_8}"
@@ -89,17 +108,7 @@ docker build \
   .
 ```
 
-需要代理时追加（可先 `export HTTP_PROXY=... HTTPS_PROXY=...`）：
-
-```bash
-  --build-arg HTTP_PROXY="${HTTP_PROXY}" \
-  --build-arg HTTPS_PROXY="${HTTPS_PROXY}" \
-  --build-arg NO_PROXY="${NO_PROXY:-localhost,127.0.0.1}" \
-```
-
-## 运行镜像（示例）
-
-### 构建后自检
+## 构建后自检
 
 ```bash
 cd "${DOCKER_SURICATA_8}"
@@ -107,22 +116,3 @@ cd "${DOCKER_SURICATA_8}"
 IMG="suricata:$(cat VERSION)-arm64-offline"
 docker run --rm "${IMG}" suricata --build-info
 ```
-
-### 启动抓包服务
-
-正式运行请用 [`run-suricata-docker.sh`](run-suricata-docker.sh)（`--network host`、`NET_RAW`/`NET_ADMIN`、日志与配置目录挂载等已写好）。**`CAPTURE_IFACE` 必填**；镜像名用 `SURICATA_IMAGE` 与构建 tag 对齐：
-
-```bash
-cd "${DOCKER_SURICATA_8}"
-
-export SURICATA_IMAGE="suricata:$(cat VERSION)-arm64-offline"
-export CAPTURE_IFACE=eth1   # 改为本机抓包网卡
-
-./run-suricata-docker.sh
-```
-
-停止容器：[`stop-suricata-docker.sh`](stop-suricata-docker.sh)（`docker stop` 前**必须等待 30 秒**，默认 `WAIT_BEFORE_STOP=30`）。
-
-## 无 veth 内核（定制内核 / 禁用 veth 模块）
-
-默认 `docker build` 会把中间容器挂到 `bridge` 网络，需要内核创建 veth 对。若构建报错 `failed to add the host ... <=> sandbox ... pair interfaces: operation not supported`，请在 **`docker build` 上加 `--network=host`**（上文示例已包含）。运行容器时同样应使用 `--network host`（见 [`run-suricata-docker.sh`](run-suricata-docker.sh)）。
