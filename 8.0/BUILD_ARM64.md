@@ -71,6 +71,8 @@ cd "${DOCKER_SURICATA_8}"
 
 注意：`OFFLINE=1` 只表示 RPM 依赖从 `vendor-arm64` 安装；如果 Suricata/Rust 构建过程中需要下载 Cargo crates，且 crates 没有 vendor 到构建上下文，构建阶段仍可能访问外网。
 
+注意：在 amd64 主机通过 QEMU 构建 arm64 镜像，应把编译 CPU 设置为 1，也就是把 `--build-arg CORES=$(nproc)` 改成 `--build-arg CORES=1`。
+
 离线 RPM 仓库必须与基础镜像的 AlmaLinux 小版本一致。当前 `vendor-arm64` 是 AlmaLinux `9.7` 版本线，构建前请确认已按上文拉取 `almalinux:9.7` 与 `almalinux/9-base:9.7`（`--platform linux/arm64`），否则离线 `dnf` 可能因包版本漂移失败。
 
 ```bash

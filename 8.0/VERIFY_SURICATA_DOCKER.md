@@ -1,220 +1,242 @@
-# Suricata 容器运行与 IEC61850/MMS 验证
+# Suricata Docker 客户环境验证手册
 
-本文档用于验证已构建好的 Suricata 离线镜像。容器启动统一使用 `run-suricata-docker.sh` 脚本；镜像名可通过 `SURICATA_IMAGE` 覆盖，例如 `suricata:8.0.4-amd64-offline` 或 `suricata:8.0.4-arm64-offline`。
+本文档用于在客户环境验证已构建好的 Suricata Docker 镜像。验证方式为：容器使用宿主机网络命名空间，直接抓取宿主机物理网卡上的真实流量。
 
-## 1. 创建 veth pair 测试接口
+容器统一使用 [`run-suricata-docker.sh`](run-suricata-docker.sh) 启动；镜像名通过 `SURICATA_IMAGE` 指定，抓包网卡通过 `CAPTURE_IFACE` 指定。
 
-进入目录
+> veth pair 本机回放测试不属于客户现场主流程，已单独整理到 [`VETH_PAIR_VERIFY.md`](VETH_PAIR_VERIFY.md)。
 
-```
+## 1. 前置条件
+
+进入部署目录：
+
+```bash
 cd /home/work/docker-suricata/8.0
 ```
 
-本文档默认使用 veth pair 做本机流量回放验证：Suricata 抓 `veth-suri0`，`tcpreplay` 从 `veth-suri1` 回放 pcap。这样不依赖物理网卡，也能避免把测试流量打到生产网络。
+确认 Docker 可用：
 
 ```bash
-ip link add veth-suri0 type veth peer name veth-suri1
-ip link set veth-suri0 up
-ip link set veth-suri1 up
+docker version
 ```
 
-如果接口已存在，可先清理后重建：
+确认镜像存在。按实际交付架构选择镜像标签：
 
 ```bash
-ip link del veth-suri0 2>/dev/null || true
-ip link add veth-suri0 type veth peer name veth-suri1
-ip link set veth-suri0 up
-ip link set veth-suri1 up
+docker image ls | grep suricata
+docker image inspect suricata:8.0.4-amd64-offline >/dev/null
+# 或：
+docker image inspect suricata:8.0.4-arm64-offline >/dev/null
 ```
 
-`tcpreplay` 直接回放二层报文，veth 两端不需要配置 IP。若需要用 `ping`、`curl`、`nc` 等工具额外生成测试流量，可以再给两端配置一个未被占用的网段，例如：
+确认宿主机已安装常用排查工具：
 
 ```bash
-ip addr add 192.168.200.1/24 dev veth-suri0
-ip addr add 192.168.200.2/24 dev veth-suri1
+command -v ip
+command -v tcpdump
+command -v jq
 ```
 
-## 2. 启动容器
+`jq` 只用于解析 EVE JSON。如果客户环境没有 `jq`，可以先用 `grep` 或把日志文件拷贝到有 `jq` 的机器上分析。
 
-`CAPTURE_IFACE` 必须设置为宿主机上的抓包接口。使用本文档的 veth pair 方案时，设置为 `veth-suri0`。
+## 2. 选择物理抓包网卡
+
+列出宿主机网卡：
+
+```bash
+ip -br link
+ip -br addr
+```
+
+选择承载 IEC61850/MMS 流量的物理网卡，例如 `eth1`、`eno1`、`ens33`、`enp3s0`。不要选择 `lo`、`docker0`、`br-*`、`veth*` 这类本机虚拟接口作为客户现场主验证接口。
+
+用 `tcpdump` 在宿主机上确认该网卡能看到目标流量。MMS 默认端口为 TCP/102：
+
+```bash
+CAPTURE_IFACE=eth1
+tcpdump -ni "${CAPTURE_IFACE}" tcp port 102 -c 10
+```
+
+如果客户现场流量不是 TCP/102，先用更宽的条件确认网卡确实有业务流量：
+
+```bash
+tcpdump -ni "${CAPTURE_IFACE}" -c 20
+```
+
+## 3. 启动 Suricata 容器
+
+启动脚本要求显式指定 `CAPTURE_IFACE`，避免误抓默认网卡。
+
+amd64 示例：
 
 ```bash
 SURICATA_IMAGE=suricata:8.0.4-amd64-offline \
-CAPTURE_IFACE=veth-suri0 \
+CAPTURE_IFACE=eth1 \
 ./run-suricata-docker.sh
 ```
 
-如果要验证 arm64 镜像，将 `SURICATA_IMAGE` 改成对应标签：
+arm64 示例：
 
 ```bash
 SURICATA_IMAGE=suricata:8.0.4-arm64-offline \
-CAPTURE_IFACE=veth-suri0 \
+CAPTURE_IFACE=eth1 \
 ./run-suricata-docker.sh
 ```
 
-也可以抓宿主机物理网卡，例如 `eth3`、`eno1`、`ens33`，但回放 pcap 时应确认不会影响实际网络：
+如需避免覆盖已有同名容器，可指定临时容器名：
 
 ```bash
-SURICATA_IMAGE=suricata:8.0.4-amd64-offline CAPTURE_IFACE=eth3 ./run-suricata-docker.sh
+CONTAINER_NAME=suricata-test \
+SURICATA_IMAGE=suricata:8.0.4-amd64-offline \
+CAPTURE_IFACE=eth1 \
+./run-suricata-docker.sh
 ```
 
-### 2.1 宿主机配置（suricata.yaml）
+注意：默认容器名是 `suricata`。脚本会先执行 `docker rm -f "${CONTAINER_NAME}"`，再创建新容器。因此客户现场复测前应确认允许替换同名容器。
 
-容器将 **`/etc/suricata-docker`** 挂载为 **`/etc/suricata`**。默认 **`SURICATA_USE_IMAGE_YAML=no`**：
+## 4. 配置文件与持久化目录
 
-- **首次启动**：若宿主机尚无 `suricata.yaml`，entrypoint 从镜像内 `/etc/suricata.dist` 复制一份。
-- **日常改配置**：编辑宿主机文件后重启容器即可（Suricata 启动时重新读取 `-c` 指定路径）：
+容器挂载以下宿主机目录：
+
+| 宿主机路径 | 容器路径 | 用途 |
+|------------|----------|------|
+| `/etc/suricata-docker` | `/etc/suricata` | `suricata.yaml` 等配置 |
+| `/var/log/suricata-docker` | `/var/log/suricata` | `eve.json`、`fast.log`、`stats.log`、`suricata.log` |
+| `/var/lib/suricata-docker` | `/var/lib/suricata` | 规则、状态数据 |
+| `/var/run/suricata-docker` | `/var/run/suricata` | Unix command socket |
+
+默认 `SURICATA_USE_IMAGE_YAML=no`：
+
+- 首次启动时，如果宿主机没有 `/etc/suricata-docker/suricata.yaml`，entrypoint 会从镜像内 `/etc/suricata.dist` 复制一份默认配置。
+- 日常修改配置时，编辑宿主机文件后重启容器即可：
 
 ```bash
 vi /etc/suricata-docker/suricata.yaml
 docker restart suricata
 ```
 
-- **从镜像恢复默认 suricata.yaml**（会覆盖宿主机手改）：
+客户现场如果习惯进入容器内修改配置，也可以这样操作。容器内的 `/etc/suricata/suricata.yaml` 实际对应宿主机的 `/etc/suricata-docker/suricata.yaml`，修改会持久化到宿主机挂载目录。
 
 ```bash
-SURICATA_USE_IMAGE_YAML=yes SURICATA_IMAGE=suricata:8.0.4-amd64-offline CAPTURE_IFACE=veth-suri0 ./run-suricata-docker.sh
-# 或手动：docker run --rm --entrypoint cat suricata:TAG /etc/suricata.dist/suricata.yaml > /etc/suricata-docker/suricata.yaml
+docker exec -it suricata /bin/bash
+vi /etc/suricata/suricata.yaml
+exit
 ```
 
-镜像内模板路径 **`/etc/suricata.dist`** 仅作“出厂默认”备份，Suricata 进程不直接读该目录。
+如果镜像内没有 `vi`，可改用 `sed`、`cat` 等命令，或回到宿主机直接编辑 `/etc/suricata-docker/suricata.yaml`。
 
-## 3. 日志轮转（logrotate）
-
-仓库内模板见 [`suricata.logrotate`](suricata.logrotate)。容器内日志目录是 `/var/log/suricata`，**宿主机 logrotate 应写挂载后的路径** `/var/log/suricata-docker`。
-
-将下面内容保存为 `/etc/logrotate.d/suricata`（或复制本仓库文件后改路径）：
-
-```text
-/var/log/suricata-docker/*.log /var/log/suricata-docker/*.json {
-    daily
-    missingok
-    rotate 3
-    nocompress
-    sharedscripts
-    postrotate
-        suricatasc -c reopen-log-files
-    endscript
-}
-```
-
-| 配置项 | 含义 |
-|--------|------|
-| 路径 | 轮转宿主机上的 `*.log`、`*.json`（如 `suricata.log`、`eve.json`、`fast.log`、`stats.log`）。 |
-| `daily` | 每天轮转一次（由系统 cron 中的 `logrotate` 触发）。 |
-| `missingok` | 日志文件不存在时不报错。 |
-| `rotate 3` | 除当前文件外最多保留 3 份历史（如 `eve.json.1` … `.3`）。 |
-| `nocompress` | 历史日志不 gzip，省 CPU，占用磁盘略多。 |
-| `sharedscripts` | 多个匹配文件在同一次轮转里只执行一次 `postrotate`。 |
-| `postrotate` … `suricatasc -c reopen-log-files` | 轮转后通知**正在运行的 Suricata** 重新打开日志；否则进程可能仍写入已改名的旧文件，新文件里没有新日志。 |
-
-**流程简述：** 每天把旧日志改名 → 创建新的空日志 → `suricatasc` 让 Suricata 切换到新文件 → 只保留最近 3 轮。
-
-**注意：**
-
-- `suricatasc` 需能访问 Suricata 的 Unix socket（默认常在 `/var/run/suricata/suricata-command.socket`）。本部署对应宿主机 **`/var/run/suricata-docker/suricata-command.socket`**；若命令在宿主机执行，可设置例如 `export SURICATA_SOCKET=/var/run/suricata-docker/suricata-command.socket`，或在 `postrotate` 里写 `suricatasc -c reopen-log-files` 前 `export` 该变量（以本机 `suricata.yaml` 中 `unix-command` 配置为准）。
-- 安装后可用 `logrotate -d /etc/logrotate.d/suricata` 做干跑检查，确认路径与 `postrotate` 无报错。
-
-## 4. 确认容器 capability
+重启前建议先做配置检查。`eth1` 替换为实际抓包网卡：
 
 ```bash
-docker inspect suricata --format '{{json .HostConfig.CapAdd}}'
+docker exec suricata suricata -T -c /etc/suricata/suricata.yaml -i eth1
 ```
 
-期望看到：
-
-```json
-["NET_ADMIN","NET_RAW","SYS_NICE"]
-```
-
-不同 Docker 版本可能显示为带 `CAP_` 前缀的形式，例如：
-
-```json
-["CAP_NET_ADMIN","CAP_NET_RAW","CAP_SYS_NICE"]
-```
-
-两种输出语义一致，确认包含 `NET_ADMIN`、`NET_RAW`、`SYS_NICE` 三项即可。
-
-## 5. 清理旧日志
-
-清理旧日志，避免本次验证结果和历史日志混在一起：
-
-```bash
-rm -f /var/log/suricata-docker/eve*.json \
-      /var/log/suricata-docker/fast.log \
-      /var/log/suricata-docker/stats.log \
-      /var/log/suricata-docker/suricata.log
-```
-
-## 6. 确认 EVE JSON 定时切分配置
-
-pcap 测试建议使用较短轮转周期，便于观察新 EVE 文件。确认宿主机挂载配置中存在：
-
-```bash
-grep -n 'rotate-interval' /etc/suricata-docker/suricata.yaml
-```
-
-期望测试值为：
-
-```yaml
-rotate-interval: minute
-```
-
-生产环境可改为 `2h` 等更长周期。
-
-## 7. 重启容器
+配置检查通过后，在宿主机重启容器让配置生效：
 
 ```bash
 docker restart suricata
+docker logs --tail 80 suricata
 ```
 
-## 8. 确认 Suricata 已启动
+不要在容器内修改 `/etc/suricata.dist/suricata.yaml`。该目录是镜像内默认配置备份，不是 Suricata 运行时读取的配置路径。
+
+如需用镜像内默认配置覆盖宿主机配置：
 
 ```bash
-docker logs --tail 50 suricata
+SURICATA_USE_IMAGE_YAML=yes \
+SURICATA_IMAGE=suricata:8.0.4-amd64-offline \
+CAPTURE_IFACE=eth1 \
+./run-suricata-docker.sh
 ```
 
-看到以下内容后再继续：
+## 5. 启动后检查
+
+确认容器运行：
+
+```bash
+docker ps --filter name=suricata
+```
+
+确认 Suricata 引擎启动：
+
+```bash
+docker logs --tail 80 suricata
+```
+
+期望看到：
 
 ```text
 Engine started.
 ```
 
-同时确认容器内 JSON 清理 cron 已启动：
+确认容器抓包参数：
+
+```bash
+docker inspect suricata --format '{{json .Config.Image}} {{json .Args}}'
+```
+
+期望 `Args` 中包含：
+
+```text
+-i eth1 -c /etc/suricata/suricata.yaml
+```
+
+确认 capability：
+
+```bash
+docker inspect suricata --format '{{json .HostConfig.CapAdd}}'
+```
+
+期望包含 `NET_ADMIN`、`NET_RAW`、`SYS_NICE`。不同 Docker 版本可能显示为带 `CAP_` 前缀的形式，例如：
+
+```json
+["CAP_NET_ADMIN","CAP_NET_RAW","CAP_SYS_NICE"]
+```
+
+确认日志文件开始生成：
+
+```bash
+ls -lh /var/log/suricata-docker
+tail -f /var/log/suricata-docker/suricata.log
+```
+
+确认容器内 JSON 清理 cron 已启动：
 
 ```bash
 docker exec suricata ps -ef | grep crond
 docker exec suricata ls -l /usr/local/bin/suricata-json-cleanup /etc/cron.d/suricata-json-cleanup
 ```
 
-## 9. 慢速回放 MMS 流量
+## 6. 清理旧日志
 
-使用 `tcpreplay` 将测试 pcap 回放到 veth pair 的发送端 `veth-suri1`。Suricata 抓包端是 `veth-suri0`，不要把 pcap 回放到同一个接口上。建议先用 `--pps=1` 慢速回放，避免虚拟网卡环境下实时抓包不完整。
-
-回放前可先用 `tcpdump` 在宿主机确认 veth pair 能看到报文：
+正式验证前建议清理旧日志，避免历史事件影响统计：
 
 ```bash
-tcpdump -ni veth-suri0 -c 10
+rm -f /var/log/suricata-docker/eve*.json \
+      /var/log/suricata-docker/fast.log \
+      /var/log/suricata-docker/stats.log \
+      /var/log/suricata-docker/suricata.log
+
+docker restart suricata
 ```
 
-另开一个终端执行：
+重启后再次确认：
 
 ```bash
-tcpreplay --pps=1 -i veth-suri1 /home/work/pcaps_dataset/mms.pcap
+docker logs --tail 50 suricata
 ```
 
-期望看到：
+看到 `Engine started.` 后再开始业务验证。
 
-```text
-Successful packets:        22
-Failed packets:            0
+## 7. 验证 IEC61850/MMS 解析
+
+确认 EVE 输出启用了 `iec61850_mms`：
+
+```bash
+grep -n 'iec61850_mms' /etc/suricata-docker/suricata.yaml
 ```
 
-## 10. 查看 IEC61850/MMS 解析记录
-
-事件名是 `iec61850_mms`，不是 `iec61850`。
-
-先定位本次最新的非空 EVE 文件，避免历史轮转日志干扰统计：
+让客户现场产生或等待一段 TCP/102 MMS 业务流量。然后定位最新非空 EVE 文件：
 
 ```bash
 EVE_FILE=$(find /var/log/suricata-docker -maxdepth 1 -type f -name 'eve*.json' -size +0c -printf '%T@ %p\n' | sort -n | tail -1 | cut -d' ' -f2-)
@@ -227,11 +249,13 @@ echo "${EVE_FILE}"
 jq -r '.event_type? // empty' "${EVE_FILE}" | sort | uniq -c
 ```
 
-期望看到类似：
+期望能看到：
 
 ```text
-8 iec61850_mms
+iec61850_mms
 ```
+
+事件名是 `iec61850_mms`，不是 `iec61850`。
 
 查看 IEC61850/MMS 摘要：
 
@@ -249,7 +273,7 @@ jq -c 'select(.event_type == "iec61850_mms") |
 }' "${EVE_FILE}"
 ```
 
-如果没有 `iec61850_mms`，检查 TCP/102 是否被完整捕获。flow 记录通常在流结束、超时或 Suricata 停止时刷出；如果刚回放完查不到 flow，可先等待一段时间，或按“停止容器”步骤停止 Suricata 后再查。
+检查 TCP/102 flow 识别结果：
 
 ```bash
 jq -c 'select(.event_type == "flow" and ((.dest_port == 102) or (.src_port == 102))) |
@@ -262,20 +286,47 @@ jq -c 'select(.event_type == "flow" and ((.dest_port == 102) or (.src_port == 10
   state: .flow.state,
   reason: .flow.reason,
   pkts_toserver: .flow.pkts_toserver,
-  pkts_toclient: .flow.pkts_toclient,
-  exception_policy: .flow.exception_policy
+  pkts_toclient: .flow.pkts_toclient
 }' "${EVE_FILE}"
 ```
 
-## 停止容器
+`flow` 记录可能在流结束、超时或 Suricata 停止时才稳定刷出。如果刚产生流量后没有看到 flow，可等待一段时间，或在允许的维护窗口停止容器后再查。
 
-推荐使用 [`stop-suricata-docker.sh`](stop-suricata-docker.sh)（`docker stop` 前默认等待 30 秒，便于刷完尾部报文）：
+## 8. 日志轮转
+
+仓库内模板见 [`suricata.logrotate`](suricata.logrotate)。容器内日志目录是 `/var/log/suricata`，宿主机 logrotate 应配置挂载后的路径 `/var/log/suricata-docker`。
+
+示例 `/etc/logrotate.d/suricata`：
+
+```text
+/var/log/suricata-docker/*.log /var/log/suricata-docker/*.json {
+    daily
+    missingok
+    rotate 3
+    nocompress
+    sharedscripts
+    postrotate
+        export SURICATA_SOCKET=/var/run/suricata-docker/suricata-command.socket
+        suricatasc -c reopen-log-files
+    endscript
+}
+```
+
+安装后可干跑检查：
+
+```bash
+logrotate -d /etc/logrotate.d/suricata
+```
+
+## 9. 停止容器
+
+推荐使用 [`stop-suricata-docker.sh`](stop-suricata-docker.sh)。脚本在 `docker stop` 前默认等待 30 秒，便于刷完尾部报文：
 
 ```bash
 ./stop-suricata-docker.sh
 ```
 
-仅停止、不删容器：
+仅停止、不删除容器：
 
 ```bash
 docker stop suricata
@@ -287,29 +338,75 @@ docker stop suricata
 docker rm -f suricata
 ```
 
-清理 veth pair：
+如果启动时指定了 `CONTAINER_NAME=suricata-test`，停止时也应使用对应容器名：
 
 ```bash
-ip link del veth-suri0 2>/dev/null || true
+CONTAINER_NAME=suricata-test ./stop-suricata-docker.sh
 ```
 
-## 常见现象
+## 10. 常见问题
 
-`event_type == "iec61850"` 没有输出是正常的，当前实现的事件名为 `iec61850_mms`。
+### 10.1 启动时报网卡不存在
 
-如果日志中出现以下警告：
+现象：
+
+```text
+error: interface not found: eth1
+```
+
+处理：
+
+```bash
+ip -br link
+```
+
+确认客户现场实际物理网卡名，并重新设置 `CAPTURE_IFACE`。
+
+### 10.2 没有 alert
+
+如果日志中出现：
 
 ```text
 W: detect: No rule files match the pattern /var/lib/suricata/rules/suricata.rules
 W: detect: 1 rule files specified, but no rules were loaded!
 ```
 
-说明没有加载检测规则，因此不会产生 alert；这不影响 IEC61850/MMS 协议解析和 `iec61850_mms` EVE 事务日志。
+说明没有加载检测规则，因此不会产生 alert。这不影响 IEC61850/MMS 协议解析和 `iec61850_mms` EVE 事务日志。
 
-如果 `eve.json` 中只有 `flow`，但没有 `iec61850_mms`，优先检查以下几项：
+### 10.3 有 flow 但没有 `iec61850_mms`
+
+优先检查：
 
 ```bash
-docker inspect suricata --format '{{json .HostConfig.CapAdd}}'
+docker inspect suricata --format '{{json .Args}}'
 grep -n 'iec61850_mms' /etc/suricata-docker/suricata.yaml
-jq -c 'select(.event_type == "flow" and ((.dest_port == 102) or (.src_port == 102)))' /var/log/suricata-docker/eve.json
+tcpdump -ni "${CAPTURE_IFACE}" tcp port 102 -c 10
+jq -c 'select(.event_type == "flow" and ((.dest_port == 102) or (.src_port == 102)))' "${EVE_FILE}"
 ```
+
+常见原因：
+
+| 原因 | 检查点 |
+|------|--------|
+| 抓错网卡 | `docker inspect` 中 `-i` 是否为客户物理网卡 |
+| 客户现场暂时没有 MMS 流量 | 宿主机 `tcpdump -ni "$CAPTURE_IFACE" tcp port 102` 是否能看到包 |
+| 报文不完整或只看到单向流量 | flow 中 `pkts_toserver`、`pkts_toclient` 是否都有计数 |
+| 配置未启用 EVE 类型 | `suricata.yaml` 中是否包含 `iec61850_mms` |
+
+### 10.4 `event_type == "iec61850"` 没有输出
+
+这是正常现象。当前实现的事件名为：
+
+```text
+iec61850_mms
+```
+
+### 10.5 EVE 文件名不是 `eve.json`
+
+如果配置了按时间切分，文件名可能类似：
+
+```text
+eve.2026-07-24_23-29-46.json
+```
+
+验证时应使用“最新非空 EVE 文件”的查找命令，而不是固定读取 `/var/log/suricata-docker/eve.json`。
