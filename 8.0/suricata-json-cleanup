@@ -2,12 +2,14 @@
 set -euo pipefail
 
 LOG_DIR="${SURICATA_LOG_DIR:-/var/log/suricata}"
-KEEP_DAYS="${SURICATA_JSON_KEEP_DAYS:-7}"
+KEEP_DAYS="${SURICATA_JSON_KEEP_DAYS:-1}"
+# Use minutes so 1 day means older than 24 hours, not find's rounded -mtime days.
+KEEP_MINUTES="$((KEEP_DAYS * 1440))"
 
 latest_json="$(find "$LOG_DIR" -maxdepth 1 -type f -name 'eve.*.json' -printf '%T@ %p\n' 2>/dev/null | sort -n | tail -1 | cut -d' ' -f2-)"
 
 if [[ -n "$latest_json" ]]; then
-    find "$LOG_DIR" -maxdepth 1 -type f -name 'eve.*.json' -mtime +"$KEEP_DAYS" ! -path "$latest_json" -delete
+    find "$LOG_DIR" -maxdepth 1 -type f -name 'eve.*.json' -mmin +"$KEEP_MINUTES" ! -path "$latest_json" -delete
 else
-    find "$LOG_DIR" -maxdepth 1 -type f -name 'eve.*.json' -mtime +"$KEEP_DAYS" -delete
+    find "$LOG_DIR" -maxdepth 1 -type f -name 'eve.*.json' -mmin +"$KEEP_MINUTES" -delete
 fi

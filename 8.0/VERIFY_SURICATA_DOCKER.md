@@ -294,12 +294,12 @@ jq -c 'select(.event_type == "flow" and ((.dest_port == 102) or (.src_port == 10
 
 ## 8. 日志轮转
 
-仓库内模板见 [`suricata.logrotate`](suricata.logrotate)。容器内日志目录是 `/var/log/suricata`，宿主机 logrotate 应配置挂载后的路径 `/var/log/suricata-docker`。
+仓库内模板见 [`suricata.logrotate`](suricata.logrotate)。容器内日志目录是 `/var/log/suricata`，宿主机 logrotate 应配置挂载后的路径 `/var/log/suricata-docker`。EVE JSON 文件由 Suricata 的 `filename` / `rotate-interval` 配置生成，并由容器内清理脚本清理；宿主机 logrotate 不应匹配 `eve*.json`，避免破坏宿主机侧读取方约定的文件名格式。
 
 示例 `/etc/logrotate.d/suricata`：
 
 ```text
-/var/log/suricata-docker/*.log /var/log/suricata-docker/*.json {
+/var/log/suricata-docker/*.log {
     daily
     missingok
     rotate 3

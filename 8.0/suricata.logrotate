@@ -1,4 +1,4 @@
-/var/log/suricata/*.log /var/log/suricata/*.json {
+/var/log/suricata/*.log {
     daily
     missingok
     rotate 3
