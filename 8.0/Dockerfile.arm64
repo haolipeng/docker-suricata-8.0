@@ -127,7 +127,7 @@ COPY vendor/rpms/runner /opt/suricata-offline-rpms
 # 离线构建仅从本地 RPM 仓安装，不配置在线源、不装 epel-release。
 # 在线构建才换镜像源并装 EPEL（个别包可能不在 base 里）。
 RUN set -eux; \
-    runtime_packages='jansson libyaml libnet libcap-ng libevent libpcap \
+    runtime_packages='cronie jansson libyaml libnet libcap-ng libevent libpcap \
                 lz4 pcre2 zlib'; \
     if [ "${OFFLINE}" = "1" ]; then \
         # --- 离线（OFFLINE=1）：不碰 AlmaLinux/EPEL 在线源 --- \
@@ -162,6 +162,12 @@ COPY --from=builder /fakeroot /
 RUN mkdir -p /var/log/suricata /var/run/suricata /var/lib/suricata
 
 COPY /update.yaml /etc/suricata/update.yaml
+COPY /suricata-json-cleanup /usr/local/bin/suricata-json-cleanup
+COPY /suricata-json-cleanup.cron /etc/cron.d/suricata-json-cleanup
+
+# 测试默认值：EVE JSON 每分钟切分一次，便于 pcap 回放时观察新文件。
+RUN sed -n '/filename: eve.%Y-%m-%d_%H-%M-%S.json/,+3p' /etc/suricata/suricata.yaml | grep -q 'rotate-interval:' || \
+        sed -i '/filename: eve.%Y-%m-%d_%H-%M-%S.json/a\      rotate-interval: minute' /etc/suricata/suricata.yaml
 
 # 以suricata用户运行 Suricata；数据目录归suricata用户所有。
 # /etc/suricata.dist 保存镜像内默认配置，供docker-entrypoint.sh在首次启动时恢复或对比。
@@ -170,7 +176,9 @@ RUN useradd --system --create-home suricata && \
         chown -R suricata:suricata /var/log/suricata && \
         chown -R suricata:suricata /var/lib/suricata && \
         chown -R suricata:suricata /var/run/suricata && \
-        cp -a /etc/suricata /etc/suricata.dist
+        cp -a /etc/suricata /etc/suricata.dist && \
+        chmod 755 /usr/local/bin/suricata-json-cleanup && \
+        chmod 644 /etc/cron.d/suricata-json-cleanup
 
 # 声明可挂载卷，便于持久化日志、规则库
 VOLUME /var/log/suricata

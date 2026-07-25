@@ -52,6 +52,7 @@ docker run -d \
     -v /var/lib/suricata-docker:/var/lib/suricata \
     -v /var/run/suricata-docker:/var/run/suricata \
     -v /etc/suricata-docker:/etc/suricata \
+    -e ENABLE_CRON=yes \
     -e "SURICATA_USE_IMAGE_YAML=${SURICATA_USE_IMAGE_YAML}" \
     "${SURICATA_IMAGE}" \
     -i "${CAPTURE_IFACE}" \

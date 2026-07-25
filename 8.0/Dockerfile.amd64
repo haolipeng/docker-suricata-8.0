@@ -174,9 +174,15 @@ COPY /update.yaml /etc/suricata/update.yaml
 
 # 日志轮转的配置文件复制到镜像中
 COPY /suricata.logrotate /etc/logrotate.d/suricata
+COPY /suricata-json-cleanup /usr/local/bin/suricata-json-cleanup
+COPY /suricata-json-cleanup.cron /etc/cron.d/suricata-json-cleanup
 
 # 离线构建跳过规则源刷新，因为这一步需要联网。
 RUN if [ "${OFFLINE}" != "1" ]; then suricata-update update-sources; fi
+
+# 测试默认值：EVE JSON 每分钟切分一次，便于 pcap 回放时观察新文件。
+RUN sed -n '/filename: eve.%Y-%m-%d_%H-%M-%S.json/,+3p' /etc/suricata/suricata.yaml | grep -q 'rotate-interval:' || \
+        sed -i '/filename: eve.%Y-%m-%d_%H-%M-%S.json/a\      rotate-interval: minute' /etc/suricata/suricata.yaml
 
 # 以suricata用户运行 Suricata；数据目录归suricata用户所有。
 # /etc/suricata.dist 保存镜像内默认配置，供docker-entrypoint.sh在首次启动时恢复或对比。
@@ -186,7 +192,9 @@ RUN useradd --system --create-home suricata && \
         chown -R suricata:suricata /var/lib/suricata && \
         chown -R suricata:suricata /var/run/suricata && \
         cp -a /etc/suricata /etc/suricata.dist && \
-        chmod 600 /etc/logrotate.d/suricata
+        chmod 600 /etc/logrotate.d/suricata && \
+        chmod 755 /usr/local/bin/suricata-json-cleanup && \
+        chmod 644 /etc/cron.d/suricata-json-cleanup
 
 # 声明可挂载卷，便于持久化日志、规则库
 VOLUME /var/log/suricata
