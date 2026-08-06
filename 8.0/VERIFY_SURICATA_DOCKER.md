@@ -2,7 +2,7 @@
 
 本文档用于在客户环境验证已构建好的 Suricata Docker 镜像。验证方式为：容器使用宿主机网络命名空间，直接抓取宿主机物理网卡上的真实流量。
 
-容器统一使用 [`run-suricata-docker.sh`](run-suricata-docker.sh) 启动；镜像名通过 `SURICATA_IMAGE` 指定，抓包网卡通过 `CAPTURE_IFACE` 指定。
+容器统一使用 [`run-suricata-docker.sh`](run-suricata-docker.sh) 启动；镜像名通过 `SURICATA_IMAGE` 指定，抓包网卡通过 `CAPTURE_IFACES` 指定，可传一个或多个网口。
 
 > veth pair 本机回放测试不属于客户现场主流程，已单独整理到 [`VETH_PAIR_VERIFY.md`](VETH_PAIR_VERIFY.md)。
 
@@ -48,30 +48,44 @@ ip -br link
 ip -br addr
 ```
 
-选择承载 IEC61850/MMS 流量的物理网卡，例如 `eth1`、`eno1`、`ens33`、`enp3s0`。不要选择 `lo`、`docker0`、`br-*`、`veth*` 这类本机虚拟接口作为客户现场主验证接口。
+选择承载 IEC61850/MMS 流量的物理网卡，例如 `eth1`、`eno1`、`ens33`、`enp3s0`。如果客户现场有 2-3 个镜像口或 TAP 口需要同时监听，逐个确认后都加入抓包网卡列表。不要选择 `lo`、`docker0`、`br-*`、`veth*` 这类本机虚拟接口作为客户现场主验证接口。
 
 用 `tcpdump` 在宿主机上确认该网卡能看到目标流量。MMS 默认端口为 TCP/102：
 
 ```bash
-CAPTURE_IFACE=eth1
-tcpdump -ni "${CAPTURE_IFACE}" tcp port 102 -c 10
+CAPTURE_IFACES=eth1
+for iface in ${CAPTURE_IFACES//,/ }; do
+  tcpdump -ni "${iface}" tcp port 102 -c 10
+done
 ```
+
+如果长时间抓不到 TCP/102，先确认该网口是否真的接入了承载 MMS 业务的镜像口、TAP 或测试链路。若网口本身没有接入 TCP/102/MMS 流量，自然抓包无流量是链路条件问题，不代表 Suricata 容器或协议解析失败；这种情况下只能通过真实 pcap 回放验证解析能力，不能证明当前物理链路存在 MMS 流量。
 
 如果客户现场流量不是 TCP/102，先用更宽的条件确认网卡确实有业务流量：
 
 ```bash
-tcpdump -ni "${CAPTURE_IFACE}" -c 20
+for iface in ${CAPTURE_IFACES//,/ }; do
+  tcpdump -ni "${iface}" -c 20
+done
+```
+
+多网口场景逐个确认：
+
+```bash
+for iface in eth1 eth2 eth3; do
+  tcpdump -ni "${iface}" tcp port 102 -c 10
+done
 ```
 
 ## 3. 启动 Suricata 容器
 
-启动脚本要求显式指定 `CAPTURE_IFACE`，避免误抓默认网卡。
+启动脚本要求显式指定 `CAPTURE_IFACES`，避免误抓默认网卡。
 
 amd64 示例：
 
 ```bash
 SURICATA_IMAGE=suricata:8.0.4-amd64-offline \
-CAPTURE_IFACE=eth1 \
+CAPTURE_IFACES=eth1 \
 ./run-suricata-docker.sh
 ```
 
@@ -79,16 +93,32 @@ arm64 示例：
 
 ```bash
 SURICATA_IMAGE=suricata:8.0.4-arm64-offline \
-CAPTURE_IFACE=eth1 \
+CAPTURE_IFACES=eth1 \
 ./run-suricata-docker.sh
 ```
+
+多网口示例：
+
+```bash
+SURICATA_IMAGE=suricata:8.0.4-amd64-offline \
+CAPTURE_IFACES="eth1 eth2 eth3" \
+./run-suricata-docker.sh
+```
+
+也可以使用逗号分隔：
+
+```bash
+CAPTURE_IFACES=eth1,eth2,eth3 ./run-suricata-docker.sh
+```
+
+脚本会展开为 Suricata 参数 `-i eth1 -i eth2 -i eth3`。这种方式适合多个网口统一分析、统一输出到同一套 EVE 日志的场景。如果客户要求按网口拆分日志或单独启停，建议启动多个容器，并为每个容器使用不同的 `CONTAINER_NAME`、日志目录和运行目录。
 
 如需避免覆盖已有同名容器，可指定临时容器名：
 
 ```bash
 CONTAINER_NAME=suricata-test \
 SURICATA_IMAGE=suricata:8.0.4-amd64-offline \
-CAPTURE_IFACE=eth1 \
+CAPTURE_IFACES="eth1 eth2" \
 ./run-suricata-docker.sh
 ```
 
@@ -108,6 +138,8 @@ CAPTURE_IFACE=eth1 \
 默认 `SURICATA_USE_IMAGE_YAML=no`：
 
 - 首次启动时，如果宿主机没有 `/etc/suricata-docker/suricata.yaml`，entrypoint 会从镜像内 `/etc/suricata.dist` 复制一份默认配置。
+- 默认配置会在 EVE `filename: eve.%Y-%m-%d_%H-%M-%S.json` 后启用 `rotate-interval: 2h`，即 Suricata 每 2 小时切分一次 `eve.*.json`。
+- 如果宿主机已有旧的 `/etc/suricata-docker/suricata.yaml` 且 EVE 配置块缺少 `rotate-interval`，entrypoint 默认会补入 `rotate-interval: 2h`。如需关闭该兜底行为，可设置 `SURICATA_ENSURE_EVE_ROTATE_INTERVAL=no`。
 - 日常修改配置时，编辑宿主机文件后重启容器即可：
 
 ```bash
@@ -125,10 +157,11 @@ exit
 
 如果镜像内没有 `vi`，可改用 `sed`、`cat` 等命令，或回到宿主机直接编辑 `/etc/suricata-docker/suricata.yaml`。
 
-重启前建议先做配置检查。`eth1` 替换为实际抓包网卡：
+重启前建议先做配置检查。`eth1` 替换为实际抓包网卡，多网口时追加多个 `-i`：
 
 ```bash
 docker exec suricata suricata -T -c /etc/suricata/suricata.yaml -i eth1
+docker exec suricata suricata -T -c /etc/suricata/suricata.yaml -i eth1 -i eth2 -i eth3
 ```
 
 配置检查通过后，在宿主机重启容器让配置生效：
@@ -145,7 +178,7 @@ docker logs --tail 80 suricata
 ```bash
 SURICATA_USE_IMAGE_YAML=yes \
 SURICATA_IMAGE=suricata:8.0.4-amd64-offline \
-CAPTURE_IFACE=eth1 \
+CAPTURE_IFACES="eth1 eth2" \
 ./run-suricata-docker.sh
 ```
 
@@ -179,6 +212,12 @@ docker inspect suricata --format '{{json .Config.Image}} {{json .Args}}'
 
 ```text
 -i eth1 -c /etc/suricata/suricata.yaml
+```
+
+多网口时应包含：
+
+```text
+-i eth1 -i eth2 -i eth3 -c /etc/suricata/suricata.yaml
 ```
 
 确认 capability：
@@ -236,7 +275,9 @@ docker logs --tail 50 suricata
 grep -n 'iec61850_mms' /etc/suricata-docker/suricata.yaml
 ```
 
-让客户现场产生或等待一段 TCP/102 MMS 业务流量。然后定位最新非空 EVE 文件：
+让客户现场产生或等待一段 TCP/102 MMS 业务流量。前提是指定的抓包网口已接入实际承载 MMS 的链路；如果某个网口没有接入 TCP/102/MMS 流量，本节的自然流量验证应记录为“该链路无 MMS 流量”，不要误判为 Suricata 解析失败。
+
+然后定位最新非空 EVE 文件：
 
 ```bash
 EVE_FILE=$(find /var/log/suricata-docker -maxdepth 1 -type f -name 'eve*.json' -size +0c -printf '%T@ %p\n' | sort -n | tail -1 | cut -d' ' -f2-)
@@ -360,7 +401,7 @@ error: interface not found: eth1
 ip -br link
 ```
 
-确认客户现场实际物理网卡名，并重新设置 `CAPTURE_IFACE`。
+确认客户现场实际物理网卡名，并重新设置 `CAPTURE_IFACES`。
 
 ### 10.2 没有 alert
 
@@ -380,8 +421,18 @@ W: detect: 1 rule files specified, but no rules were loaded!
 ```bash
 docker inspect suricata --format '{{json .Args}}'
 grep -n 'iec61850_mms' /etc/suricata-docker/suricata.yaml
-tcpdump -ni "${CAPTURE_IFACE}" tcp port 102 -c 10
+for iface in ${CAPTURE_IFACES//,/ }; do
+  tcpdump -ni "${iface}" tcp port 102 -c 10
+done
 jq -c 'select(.event_type == "flow" and ((.dest_port == 102) or (.src_port == 102)))' "${EVE_FILE}"
+```
+
+多网口时逐个抓包确认：
+
+```bash
+for iface in eth1 eth2 eth3; do
+  tcpdump -ni "${iface}" tcp port 102 -c 10
+done
 ```
 
 常见原因：
@@ -389,7 +440,8 @@ jq -c 'select(.event_type == "flow" and ((.dest_port == 102) or (.src_port == 10
 | 原因 | 检查点 |
 |------|--------|
 | 抓错网卡 | `docker inspect` 中 `-i` 是否为客户物理网卡 |
-| 客户现场暂时没有 MMS 流量 | 宿主机 `tcpdump -ni "$CAPTURE_IFACE" tcp port 102` 是否能看到包 |
+| 抓包网口本身未接入 MMS/TCP/102 流量 | 宿主机逐个网口执行 `tcpdump -ni "$iface" tcp port 102` 是否能看到包；交换机镜像/TAP 是否把 MMS 流量送到该口 |
+| 客户现场暂时没有 MMS 流量 | 业务侧是否正在产生 MMS；可等待业务窗口或使用真实 pcap 回放验证解析能力 |
 | 报文不完整或只看到单向流量 | flow 中 `pkts_toserver`、`pkts_toclient` 是否都有计数 |
 | 配置未启用 EVE 类型 | `suricata.yaml` 中是否包含 `iec61850_mms` |
 

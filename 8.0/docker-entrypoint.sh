@@ -43,7 +43,30 @@ seed_config_from_dist() {
     done
 }
 
+ensure_eve_rotate_interval() {
+    local yaml="/etc/suricata/suricata.yaml"
+    local interval="${SURICATA_EVE_ROTATE_INTERVAL:-2h}"
+
+    [[ "${SURICATA_ENSURE_EVE_ROTATE_INTERVAL:-yes}" = "yes" ]] || return 0
+    [[ -f "${yaml}" ]] || return 0
+
+    if awk '
+        /^[[:space:]]*-[[:space:]]eve-log:/ { in_eve = 1; next }
+        in_eve && /^[[:space:]]*-[[:space:]][[:alnum:]_-]+:/ { in_eve = 0 }
+        in_eve && /^[[:space:]]*rotate-interval:/ { found = 1 }
+        END { exit found ? 0 : 1 }
+    ' "${yaml}"; then
+        return 0
+    fi
+
+    if grep -q '^[[:space:]]*filename:[[:space:]]*eve.%Y-%m-%d_%H-%M-%S.json' "${yaml}"; then
+        echo "Adding eve-log rotate-interval: ${interval} to ${yaml}."
+        sed -i "/^[[:space:]]*filename:[[:space:]]*eve.%Y-%m-%d_%H-%M-%S.json/a\      rotate-interval: ${interval}" "${yaml}"
+    fi
+}
+
 seed_config_from_dist
+ensure_eve_rotate_interval
 
 # If the first command does not look like argument, assume its a
 # command the user wants to run. Normally I wouldn't do this.

@@ -165,10 +165,6 @@ COPY /update.yaml /etc/suricata/update.yaml
 COPY /suricata-json-cleanup /usr/local/bin/suricata-json-cleanup
 COPY /suricata-json-cleanup.cron /etc/cron.d/suricata-json-cleanup
 
-# 测试默认值：EVE JSON 每分钟切分一次，便于 pcap 回放时观察新文件。
-RUN sed -n '/filename: eve.%Y-%m-%d_%H-%M-%S.json/,+3p' /etc/suricata/suricata.yaml | grep -q 'rotate-interval:' || \
-        sed -i '/filename: eve.%Y-%m-%d_%H-%M-%S.json/a\      rotate-interval: minute' /etc/suricata/suricata.yaml
-
 # 以suricata用户运行 Suricata；数据目录归suricata用户所有。
 # /etc/suricata.dist 保存镜像内默认配置，供docker-entrypoint.sh在首次启动时恢复或对比。
 RUN useradd --system --create-home suricata && \
