@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 示例：CAPTURE_IFACE=eth1 PCAP_DIR=/home/work/pcaps_dataset MBPS=5 ./replay-pcaps.sh
+# 示例：CAPTURE_IFACE=eth1 PCAP_DIR=/home/work/pcaps_dataset MBPS=5 ./scripts/replay-pcaps.sh
 # CAPTURE_IFACE 必填；PCAP_DIR 默认 /home/work/pcaps_dataset；MBPS 默认 5
 set -euo pipefail
 

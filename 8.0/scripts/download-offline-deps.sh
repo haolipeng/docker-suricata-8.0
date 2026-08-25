@@ -3,6 +3,7 @@
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+ROOT_DIR=$(cd "${SCRIPT_DIR}/.." && pwd)
 
 ARCH="amd64"
 OUTPUT_DIR=""
@@ -12,7 +13,7 @@ CLEAN="no"
 usage() {
     cat <<'EOF'
 Usage:
-  ./download-offline-deps.sh [options]
+  ./scripts/download-offline-deps.sh [options]
 
 Options:
   --arch <amd64|arm64>       Target architecture. Default: amd64
@@ -22,9 +23,9 @@ Options:
   -h, --help                 Show this help
 
 Examples:
-  ./download-offline-deps.sh --arch amd64 --clean
-  ./download-offline-deps.sh --arch arm64 --clean
-  ./link-vendor-for-build.sh amd64   # before offline docker build
+  ./scripts/download-offline-deps.sh --arch amd64 --clean
+  ./scripts/download-offline-deps.sh --arch arm64 --clean
+  ./scripts/link-vendor-for-build.sh amd64   # before offline docker build
 EOF
 }
 
@@ -72,7 +73,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "${OUTPUT_DIR}" ]]; then
-    OUTPUT_DIR="${SCRIPT_DIR}/vendor-${ARCH}"
+    OUTPUT_DIR="${ROOT_DIR}/vendor-${ARCH}"
 fi
 
 case "${ARCH}" in

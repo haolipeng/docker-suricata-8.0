@@ -7,9 +7,20 @@ KEEP_DAYS="${SURICATA_JSON_KEEP_DAYS:-1}"
 KEEP_MINUTES="$((KEEP_DAYS * 1440))"
 
 latest_json="$(find "$LOG_DIR" -maxdepth 1 -type f -name 'eve.*.json' -printf '%T@ %p\n' 2>/dev/null | sort -n | tail -1 | cut -d' ' -f2-)"
+before_count="$(find "$LOG_DIR" -maxdepth 1 -type f -name 'eve.*.json' 2>/dev/null | wc -l)"
 
 if [[ -n "$latest_json" ]]; then
     find "$LOG_DIR" -maxdepth 1 -type f -name 'eve.*.json' -mmin +"$KEEP_MINUTES" ! -path "$latest_json" -delete
 else
     find "$LOG_DIR" -maxdepth 1 -type f -name 'eve.*.json' -mmin +"$KEEP_MINUTES" -delete
 fi
+
+after_count="$(find "$LOG_DIR" -maxdepth 1 -type f -name 'eve.*.json' 2>/dev/null | wc -l)"
+deleted_count="$((before_count - after_count))"
+
+printf '[%s] suricata-json-cleanup ok log_dir=%s keep_minutes=%s deleted=%s latest=%s\n' \
+    "$(date '+%F %T %Z')" \
+    "$LOG_DIR" \
+    "$KEEP_MINUTES" \
+    "$deleted_count" \
+    "${latest_json:-none}"

@@ -4,8 +4,8 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 用法:
-  bash build-single-layer-image.sh
-  SOURCE_IMAGE=26c006cba08a SKIP_BUILD=1 bash build-single-layer-image.sh
+  bash scripts/build-single-layer-image.sh
+  SOURCE_IMAGE=26c006cba08a SKIP_BUILD=1 bash scripts/build-single-layer-image.sh
 
 说明:
   - 默认先按当前目录 Dockerfile 构建 Suricata 临时镜像，再生成单层镜像。
@@ -14,7 +14,7 @@ usage() {
 
 环境变量:
   TARGETARCH          目标架构，默认 arm64，可选 arm64/amd64
-  VERSION             Suricata 版本，默认读取 ./VERSION
+  VERSION             Suricata 版本，默认读取项目根目录的 VERSION
   IMAGE_NAME          镜像名，默认 suricata
   IMAGE_TAG           输出 tag，默认 ${VERSION}-${TARGETARCH}-single-layer
   OUTPUT_IMAGE        输出镜像完整引用，默认 ${IMAGE_NAME}:${IMAGE_TAG}
@@ -33,10 +33,10 @@ usage() {
   SOURCE_IMAGE=26c006cba08a \
   SKIP_BUILD=1 \
   OUTPUT_IMAGE=suricata:8.0.4-arm64-single-layer \
-  bash build-single-layer-image.sh
+  bash scripts/build-single-layer-image.sh
 
   # 从当前 Dockerfile 离线构建并生成单层镜像：
-  TARGETARCH=arm64 OFFLINE=1 bash build-single-layer-image.sh
+  TARGETARCH=arm64 OFFLINE=1 bash scripts/build-single-layer-image.sh
 EOF
 }
 
@@ -46,11 +46,12 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
 fi
 
 if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
-  echo "请直接执行脚本，不要 source: bash build-single-layer-image.sh" >&2
+  echo "请直接执行脚本，不要 source: bash scripts/build-single-layer-image.sh" >&2
   return 1
 fi
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${ROOT_DIR}"
 
 need_cmd() {

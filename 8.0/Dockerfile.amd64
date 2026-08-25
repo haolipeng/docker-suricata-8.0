@@ -181,7 +181,7 @@ COPY /update.yaml /etc/suricata/update.yaml
 
 # 日志轮转的配置文件复制到镜像中
 COPY /suricata.logrotate /etc/logrotate.d/suricata
-COPY /suricata-json-cleanup /usr/local/bin/suricata-json-cleanup
+COPY /scripts/suricata-json-cleanup /usr/local/bin/suricata-json-cleanup
 COPY /suricata-json-cleanup.cron /etc/cron.d/suricata-json-cleanup
 
 # 离线构建跳过规则源刷新，因为这一步需要联网。

@@ -3,16 +3,17 @@
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+ROOT_DIR=$(cd "${SCRIPT_DIR}/.." && pwd)
 
 usage() {
     cat <<'EOF'
 Usage:
-  ./link-vendor-for-build.sh <amd64|arm64>
+  ./scripts/link-vendor-for-build.sh <amd64|arm64>
 
 Creates vendor -> vendor-<arch> in the 8.0 build context so Dockerfile COPY /vendor
 uses the correct architecture's offline RPM tree.
 
-Run download-offline-deps.sh for that arch first.
+Run scripts/download-offline-deps.sh for that arch first.
 EOF
 }
 
@@ -30,12 +31,12 @@ case "${ARCH}" in
         ;;
 esac
 
-VENDOR_ARCH_DIR="${SCRIPT_DIR}/vendor-${ARCH}"
-LINK_PATH="${SCRIPT_DIR}/vendor"
+VENDOR_ARCH_DIR="${ROOT_DIR}/vendor-${ARCH}"
+LINK_PATH="${ROOT_DIR}/vendor"
 
 if [[ ! -d "${VENDOR_ARCH_DIR}/rpms/builder" ]]; then
     echo "error: missing ${VENDOR_ARCH_DIR}/rpms/builder" >&2
-    echo "Run: ./download-offline-deps.sh --arch ${ARCH} --clean" >&2
+    echo "Run: ./scripts/download-offline-deps.sh --arch ${ARCH} --clean" >&2
     exit 1
 fi
 

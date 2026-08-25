@@ -22,14 +22,40 @@ ip addr add 192.168.200.1/24 dev veth-suri0
 ip addr add 192.168.200.2/24 dev veth-suri1
 ```
 
-## 2. 启动容器抓 veth
+## 2. 清理测试环境
+
+为保证每次测试都是干净环境，启动容器前清理上一次测试留下的配置、规则、日志、状态和运行时文件：
+
+```bash
+docker rm -f suricata 2>/dev/null || true
+
+rm -rf /etc/suricata-docker/*
+rm -rf /usr/share/suricata-docker/rules/*
+rm -rf /var/log/suricata-docker/*
+rm -rf /var/lib/suricata-docker/*
+rm -rf /var/run/suricata-docker/*
+```
+
+清理范围：
+
+| 路径 | 内容 |
+|------|------|
+| `/etc/suricata-docker` | 运行时配置、SSH 白名单 |
+| `/usr/share/suricata-docker/rules` | 运行时产品规则 |
+| `/var/log/suricata-docker` | `eve*.json`、`fast.log`、`stats.log`、`suricata.log` |
+| `/var/lib/suricata-docker` | Suricata 运行状态和缓存 |
+| `/var/run/suricata-docker` | socket、pid 等运行时文件 |
+
+不要删除镜像内的 `/etc/suricata.dist` 或 `/usr/share/suricata/rules.dist`，它们用于容器启动时恢复默认配置和规则。
+
+## 3. 启动容器抓 veth
 
 amd64 示例：
 
 ```bash
 SURICATA_IMAGE=suricata:8.0.4-amd64-offline \
 CAPTURE_IFACE=veth-suri0 \
-./run-suricata-docker.sh
+./scripts/run-suricata-docker.sh
 ```
 
 arm64 示例：
@@ -37,7 +63,7 @@ arm64 示例：
 ```bash
 SURICATA_IMAGE=suricata:8.0.4-arm64-offline \
 CAPTURE_IFACE=veth-suri0 \
-./run-suricata-docker.sh
+./scripts/run-suricata-docker.sh
 ```
 
 确认启动成功：
@@ -52,7 +78,7 @@ docker logs --tail 80 suricata
 Engine started.
 ```
 
-## 3. 清理旧日志
+## 4. 清理旧日志
 
 ```bash
 rm -f /var/log/suricata-docker/eve*.json \
@@ -63,7 +89,7 @@ rm -f /var/log/suricata-docker/eve*.json \
 docker restart suricata
 ```
 
-## 4. 慢速回放 MMS pcap
+## 5. 慢速回放 MMS pcap
 
 建议先用 `--pps=1` 慢速回放，避免虚拟网卡环境下实时抓包不完整。
 
@@ -86,7 +112,7 @@ Successful packets:        22
 Failed packets:            0
 ```
 
-## 5. 查看 IEC61850/MMS 解析记录
+## 6. 查看 IEC61850/MMS 解析记录
 
 定位本次最新非空 EVE 文件：
 
@@ -142,12 +168,12 @@ jq -c 'select(.event_type == "flow" and ((.dest_port == 102) or (.src_port == 10
 
 如果刚回放完查不到 flow，可等待一段时间，或停止容器后再查。flow 的 `reason` 可能是 `timeout` 或 `shutdown`，不应作为严格固定值断言。
 
-## 6. 停止并清理
+## 7. 停止并清理
 
 停止容器：
 
 ```bash
-WAIT_BEFORE_STOP=5 ./stop-suricata-docker.sh
+WAIT_BEFORE_STOP=5 ./scripts/stop-suricata-docker.sh
 ```
 
 清理 veth pair：

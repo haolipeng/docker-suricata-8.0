@@ -1,4 +1,4 @@
-# slim 版 arm64 镜像，目标体积 <500MB；完整版见 Dockerfile.arm64.full
+# slim 版 arm64 镜像，目标体积 <500MB。
 # builder阶段的镜像，采用完整 AlmaLinux 9，方便 dnf 装 gcc、rust、*-devel 等编译依赖
 FROM --platform=linux/arm64 almalinux:9.7 AS builder
 
@@ -120,7 +120,7 @@ ENV HTTP_PROXY=${HTTP_PROXY} \
 
 # runner：仅 COPY 离线 runner RPM 子目录（~50MB），勿 COPY 整个 vendor（~300MB+）。
 # 装包后删除 /opt/suricata-offline-rpms。
-# 在线构建也会 COPY 该目录（需 link-vendor-for-build.sh），但不走离线 dnf 路径。
+# 在线构建也会 COPY 该目录（需 scripts/link-vendor-for-build.sh），但不走离线 dnf 路径。
 COPY vendor/rpms/runner /opt/suricata-offline-rpms
 
 # runner：slim runtime 依赖均在 AlmaLinux base/appstream。
@@ -162,7 +162,7 @@ COPY --from=builder /fakeroot /
 RUN mkdir -p /var/log/suricata /var/run/suricata /var/lib/suricata
 
 COPY /update.yaml /etc/suricata/update.yaml
-COPY /suricata-json-cleanup /usr/local/bin/suricata-json-cleanup
+COPY /scripts/suricata-json-cleanup /usr/local/bin/suricata-json-cleanup
 COPY /suricata-json-cleanup.cron /etc/cron.d/suricata-json-cleanup
 
 # 以suricata用户运行 Suricata；数据目录归suricata用户所有。
