@@ -103,7 +103,7 @@ docker run --rm -it --network host \
 | 宿主机路径 | 容器路径 | 用途 |
 |------------|----------|------|
 | `/var/log/suricata-docker` | `/var/log/suricata` | 日志 |
-| `/var/lib/suricata-docker` | `/var/lib/suricata` | 规则、Suricata-Update 缓存等 |
+| `/var/lib/suricata-docker` | `/var/lib/suricata` | 运行状态和缓存（不存放产品规则） |
 | `/var/run/suricata-docker` | `/var/run/suricata` | 运行时文件 |
 | `/etc/suricata-docker` | `/etc/suricata` | 配置文件 |
 
@@ -210,8 +210,9 @@ logrotate /etc/logrotate.d/suricata
 容器暴露以下数据卷：
 
 - `/var/log/suricata` — 日志目录
-- `/var/lib/suricata` — 规则、Suricata-Update 缓存及运行时数据
+- `/var/lib/suricata` — 运行状态和缓存（不存放产品规则）
 - `/etc/suricata` — 配置目录
+- `/usr/share/suricata/rules` — 产品规则（`run-suricata-docker.sh` 挂到宿主机 `/usr/share/suricata-docker/rules`）
 
 > 若将 `/etc/suricata` 挂载为空卷，首次启动时会从镜像内默认配置填充。
 
@@ -252,6 +253,7 @@ docker run --rm -it --network host \
 | `PUID` / `PGID` | 调整容器内 `suricata` 用户的 UID/GID，便于 bind mount 权限一致 |
 | `ENABLE_CRON` | 设为 `yes` 时在容器内启动 `crond`（配合 cron 脚本做 logrotate 等） |
 | `SURICATA_IMAGE` | `run-suricata-docker.sh` 使用的镜像名（默认 `suricata:8.0.4-offline`） |
+| `SURICATA_USE_IMAGE_RULES` | 设为 `yes` 时用镜像默认规则覆盖宿主机已有规则文件 |
 | `CAPTURE_IFACE` | `run-suricata-docker.sh` **必填**，指定抓包网卡 |
 | `CONTAINER_NAME` | 容器名（默认 `suricata`） |
 | `WAIT_BEFORE_STOP` | `stop-suricata-docker.sh` 停止前等待秒数（默认 `30`） |

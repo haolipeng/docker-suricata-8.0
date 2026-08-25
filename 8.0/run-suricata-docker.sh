@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# 启动 Suricata 容器。CAPTURE_IFACES 必填，可指定一个或多个网口。
+# 启动 Suricata 容器。CAPTURE_IFACES 可指定一个或多个网口。
 set -euo pipefail
 
 # 可通过环境变量覆盖镜像名和容器名；抓包网卡必须显式指定，避免误抓默认网卡。
 # CAPTURE_IFACES 支持一个网口、空格分隔的多个网口，或逗号分隔的多个网口。
 SURICATA_IMAGE="${SURICATA_IMAGE:-suricata:8.0.4-arm64-offline}"
-CAPTURE_IFACES="${CAPTURE_IFACES:-}"
+# CAPTURE_IFACE 是旧版单网口变量，保留兼容；新部署统一使用 CAPTURE_IFACES。
+CAPTURE_IFACES="${CAPTURE_IFACES:-${CAPTURE_IFACE:-}}"
 CONTAINER_NAME="${CONTAINER_NAME:-suricata}"
 
 # 启动前先做本地检查，尽早暴露镜像缺失或网卡名错误。
@@ -22,11 +23,14 @@ for iface in "${CAPTURE_IFACES_LIST[@]}"; do
 done
 [[ "${#SURICATA_IFACE_ARGS[@]}" -gt 0 ]] || { echo "error: no valid capture interfaces specified" >&2; exit 1; }
 
-# 固定使用宿主机目录持久化 Suricata 的日志、规则/状态、运行时文件和配置。
+# 固定使用宿主机目录持久化 Suricata 的日志、运行状态、运行时文件、配置和产品规则。
+# 产品规则挂到 /usr/share/suricata-docker/rules，不在 /var/lib 下管理。
 # 配置默认以宿主机 /etc/suricata-docker 为准：改 suricata.yaml 后 docker restart 即生效。
-# 若要用镜像内默认 suricata.yaml 覆盖宿主机文件，启动前 export SURICATA_USE_IMAGE_YAML=yes
+# 规则文件改完后 USR2 热加载即可；脚本会 docker rm -f 再建容器，但规则在宿主机挂载上不会丢。
+# 若要用镜像内默认 suricata.yaml 覆盖宿主机文件，启动前 export SURICATA_USE_IMAGE_YAML=yes。
 SURICATA_USE_IMAGE_YAML="${SURICATA_USE_IMAGE_YAML:-no}"
-mkdir -p /var/log/suricata-docker /var/lib/suricata-docker /var/run/suricata-docker /etc/suricata-docker
+mkdir -p /var/log/suricata-docker /var/lib/suricata-docker /var/run/suricata-docker \
+    /etc/suricata-docker /usr/share/suricata-docker/rules
 
 # 容器 date / EVE timestamp 与宿主机一致：挂载宿主机时区，并传入 TZ（若可读）。
 EXTRA_DOCKER_OPTS=()
@@ -62,6 +66,7 @@ docker run -d \
     -v /var/lib/suricata-docker:/var/lib/suricata \
     -v /var/run/suricata-docker:/var/run/suricata \
     -v /etc/suricata-docker:/etc/suricata \
+    -v /usr/share/suricata-docker/rules:/usr/share/suricata/rules \
     -e ENABLE_CRON=yes \
     -e "SURICATA_USE_IMAGE_YAML=${SURICATA_USE_IMAGE_YAML}" \
     "${SURICATA_IMAGE}" \

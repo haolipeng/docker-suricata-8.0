@@ -119,13 +119,13 @@ fi
 检查并重启容器：
 
 ```bash
-docker exec "${CONTAINER}" suricata -T -c /etc/suricata/suricata.yaml -i "${CAPTURE_IFACE}" || true
+docker exec "${CONTAINER}" suricata -T -c /etc/suricata/suricata.yaml -i "${CAPTURE_IFACE}"
 docker restart "${CONTAINER}"
 sleep 5
 docker ps --filter "name=${CONTAINER}"
 ```
 
-说明：无规则测试下，`suricata -T` 可能因 `No rule files match` 返回非 0；只要不是 YAML 解析错误，可以继续。
+配置检查必须成功；产品规则应从 `/usr/share/suricata/rules` 加载，失败时先修复配置再继续。
 
 ### 6.2 重启后写临时清理 cron
 

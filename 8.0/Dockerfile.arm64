@@ -167,11 +167,15 @@ COPY /suricata-json-cleanup.cron /etc/cron.d/suricata-json-cleanup
 
 # 以suricata用户运行 Suricata；数据目录归suricata用户所有。
 # /etc/suricata.dist 保存镜像内默认配置，供docker-entrypoint.sh在首次启动时恢复或对比。
+# /usr/share/suricata/rules.dist 保存产品规则备份；规则目录被宿主机挂载遮住后仍能从这里填充。
 RUN useradd --system --create-home suricata && \
         chown -R suricata:suricata /etc/suricata && \
         chown -R suricata:suricata /var/log/suricata && \
         chown -R suricata:suricata /var/lib/suricata && \
         chown -R suricata:suricata /var/run/suricata && \
+        mkdir -p /usr/share/suricata/rules && \
+        cp -a /usr/share/suricata/rules /usr/share/suricata/rules.dist && \
+        chown -R suricata:suricata /usr/share/suricata/rules && \
         cp -a /etc/suricata /etc/suricata.dist && \
         chmod 755 /usr/local/bin/suricata-json-cleanup && \
         chmod 644 /etc/cron.d/suricata-json-cleanup

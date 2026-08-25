@@ -130,14 +130,17 @@ CAPTURE_IFACES="eth1 eth2" \
 
 | 宿主机路径 | 容器路径 | 用途 |
 |------------|----------|------|
-| `/etc/suricata-docker` | `/etc/suricata` | `suricata.yaml` 等配置 |
+| `/usr/share/suricata-docker/rules` | `/usr/share/suricata/rules` | 产品规则（可现场修改；首次从镜像 `rules.dist` 填充） |
+| `/usr/share/suricata/iprep`（镜像内） | 同路径 | 随镜像发布的 IP Reputation 类别定义 |
+| `/etc/suricata-docker` | `/etc/suricata` | `suricata.yaml` 和客户 SSH 白名单 |
 | `/var/log/suricata-docker` | `/var/log/suricata` | `eve.json`、`fast.log`、`stats.log`、`suricata.log` |
-| `/var/lib/suricata-docker` | `/var/lib/suricata` | 规则、状态数据 |
+| `/var/lib/suricata-docker` | `/var/lib/suricata` | 运行状态和缓存（不存放产品规则） |
 | `/var/run/suricata-docker` | `/var/run/suricata` | Unix command socket |
 
 默认 `SURICATA_USE_IMAGE_YAML=no`：
 
 - 首次启动时，如果宿主机没有 `/etc/suricata-docker/suricata.yaml`，entrypoint 会从镜像内 `/etc/suricata.dist` 复制一份默认配置。
+- 首次启动或 `iprep` 目录内文件缺失时，会创建 `/etc/suricata-docker/iprep/ssh-allow.list`；已有白名单永不覆盖。
 - 默认配置会在 EVE `filename: eve.%Y-%m-%d_%H-%M-%S.json` 后启用 `rotate-interval: 2h`，即 Suricata 每 2 小时切分一次 `eve.*.json`。
 - 如果宿主机已有旧的 `/etc/suricata-docker/suricata.yaml` 且 EVE 配置块缺少 `rotate-interval`，entrypoint 默认会补入 `rotate-interval: 2h`。如需关闭该兜底行为，可设置 `SURICATA_ENSURE_EVE_ROTATE_INTERVAL=no`。
 - 日常修改配置时，编辑宿主机文件后重启容器即可：
@@ -172,6 +175,55 @@ docker logs --tail 80 suricata
 ```
 
 不要在容器内修改 `/etc/suricata.dist/suricata.yaml`。该目录是镜像内默认配置备份，不是 Suricata 运行时读取的配置路径。
+
+### 4.1 产品规则热更新与 SSH 白名单
+
+产品规则挂在宿主机 `/usr/share/suricata-docker/rules`，对应容器内 `/usr/share/suricata/rules`。`run-suricata-docker.sh` 会 `docker rm -f` 再建容器，但规则在宿主机上，不会随容器一起丢掉。
+
+默认 `SURICATA_USE_IMAGE_RULES=no`：
+
+- 首次启动时，宿主机缺哪个规则文件，entrypoint 就从镜像内 `/usr/share/suricata/rules.dist` 复制哪个。
+- 已有规则文件永不覆盖，现场改动会保留。
+- 新镜像里新增的规则文件，下次启动会补到宿主机；已改过的同名文件仍以现场为准。
+
+现场改已有 `.rules` 文件后，用 `USR2` 热加载，不必重启容器：
+
+```bash
+vi /usr/share/suricata-docker/rules/mms-critical-object.rules
+docker exec suricata suricata -T -c /etc/suricata/suricata.yaml
+docker kill --signal USR2 suricata
+docker logs --tail 80 suricata
+```
+
+也可以 `docker exec` 编辑容器内 `/usr/share/suricata/rules/`，改动同样写到宿主机挂载目录。若现场使用 unix command socket，可改执行 `suricatasc -c reload-rules`。
+
+新增一个 yaml 里尚未列出的规则文件时，还要改 `/etc/suricata-docker/suricata.yaml` 的 `rule-files:`。这是改配置，Suricata 不会随 `USR2` 重读 yaml，需要 `docker restart suricata`。
+
+若要把现场规则恢复成镜像默认：
+
+```bash
+SURICATA_USE_IMAGE_RULES=yes \
+SURICATA_IMAGE=suricata:8.0.4-amd64-offline \
+CAPTURE_IFACES="eth1 eth2" \
+./run-suricata-docker.sh
+```
+
+不要修改镜像内 `/usr/share/suricata/rules.dist`。那是填充用的备份，不是运行时读取路径。
+
+客户 SSH 白名单仍只维护：
+
+```text
+/etc/suricata-docker/iprep/ssh-allow.list
+```
+
+每行格式为 `<IPv4|IPv6|CIDR>,1,<1-127 分值>`，例如：
+
+```text
+10.1.1.50,1,127
+10.2.0.0/16,1,127
+```
+
+白名单随规则重载重新读取；`/usr/share/suricata/iprep/categories.txt` 的类别定义变更必须通过新镜像发布并重启容器。
 
 如需用镜像内默认配置覆盖宿主机配置：
 
@@ -403,16 +455,15 @@ ip -br link
 
 确认客户现场实际物理网卡名，并重新设置 `CAPTURE_IFACES`。
 
-### 10.2 没有 alert
+### 10.2 旧规则路径配置被拒绝
 
-如果日志中出现：
+若挂载目录保留了旧配置，entrypoint 会明确拒绝启动：
 
 ```text
-W: detect: No rule files match the pattern /var/lib/suricata/rules/suricata.rules
-W: detect: 1 rule files specified, but no rules were loaded!
+ERROR: the active Suricata configuration still loads suricata.rules.
 ```
 
-说明没有加载检测规则，因此不会产生 alert。这不影响 IEC61850/MMS 协议解析和 `iec61850_mms` EVE 事务日志。
+删除活动的 `suricata.rules` 加载项，并将 `default-rule-path` 改为 `/usr/share/suricata/rules`。注释中的旧路径不会触发检查。
 
 ### 10.3 有 flow 但没有 `iec61850_mms`
 

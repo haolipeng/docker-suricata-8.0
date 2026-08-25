@@ -1,114 +1,171 @@
-#! /bin/bash
+#!/bin/bash
 
-# 容器入口脚本，初始化配置和目录权限，再以suricat用户启动
-set -e
+# 容器入口脚本：填充配置与规则，再以 suricata 用户启动引擎。
+set -euo pipefail
 
-fix_perms() {
-    if [[ "${PGID}" ]]; then
-        groupmod -o -g "${PGID}" suricata
-    fi
+readonly CONFIG_DIR=/etc/suricata
+readonly CONFIG_DIST_DIR=/etc/suricata.dist
+readonly RULES_DIR=/usr/share/suricata/rules
+readonly RULES_DIST_DIR=/usr/share/suricata/rules.dist
+readonly STATE_DIR=/var/lib/suricata
+readonly LOG_DIR=/var/log/suricata
+readonly RUN_DIR=/var/run/suricata
+readonly SURICATA_USER=suricata
+readonly SURICATA_BIN=/usr/bin/suricata
 
-    if [[ "${PUID}" ]]; then
-        usermod -o -u "${PUID}" suricata
-    fi
+SURICATA_ARGS=()
 
-    chown -R suricata:suricata /etc/suricata
-    chown -R suricata:suricata /var/lib/suricata
-    chown -R suricata:suricata /var/log/suricata
-    chown -R suricata:suricata /var/run/suricata
+log() {
+    echo "$*"
 }
 
-# 配置目录策略（与 run-suricata-docker.sh 挂载 /etc/suricata-docker 配合）：
-# - SURICATA_USE_IMAGE_YAML=no（默认）：保留宿主机已有文件；仅缺失时从 /etc/suricata.dist 复制。
-#   在宿主机改 /etc/suricata-docker/suricata.yaml 后 docker restart 即可加载新配置。
-# - SURICATA_USE_IMAGE_YAML=yes：每次启动用镜像内 suricata.dist 覆盖 suricata.yaml（宿主机手改会被冲掉）。
-seed_config_from_dist() {
-    local src dst filename
+warn() {
+    echo "Warning: $*" >&2
+}
 
-    for src in /etc/suricata.dist/*; do
+# force=yes 时覆盖 dst；否则仅在 dst 不存在时复制。
+copy_dist_file() {
+    local src="$1"
+    local dst="$2"
+    local force="${3:-no}"
+    local reason="${4:-}"
+
+    mkdir -p "$(dirname "${dst}")"
+
+    if [[ "${force}" = "yes" ]]; then
+        if [[ -n "${reason}" ]]; then
+            log "Refreshing ${dst} from image default (${reason})."
+        else
+            log "Refreshing ${dst} from image default."
+        fi
+        cp -af "${src}" "${dst}"
+        return 0
+    fi
+
+    if [[ ! -e "${dst}" ]]; then
+        log "Creating ${dst} from image default."
+        cp -a "${src}" "${dst}"
+    fi
+}
+
+# 按 PUID/PGID 调整 suricata 用户，并修正配置与数据目录属主。
+fix_perms() {
+    if [[ -n "${PGID:-}" ]]; then
+        groupmod -o -g "${PGID}" "${SURICATA_USER}"
+    fi
+
+    if [[ -n "${PUID:-}" ]]; then
+        usermod -o -u "${PUID}" "${SURICATA_USER}"
+    fi
+
+    chown -R "${SURICATA_USER}:${SURICATA_USER}" "${CONFIG_DIR}"
+    chown -R "${SURICATA_USER}:${SURICATA_USER}" "${STATE_DIR}"
+    chown -R "${SURICATA_USER}:${SURICATA_USER}" "${LOG_DIR}"
+    chown -R "${SURICATA_USER}:${SURICATA_USER}" "${RUN_DIR}"
+    chown -R "${SURICATA_USER}:${SURICATA_USER}" "${RULES_DIR}"
+}
+
+# 检查当前进程是否具备指定 Linux capability。
+check_for_cap() {
+    local cap="$1"
+
+    printf "Checking for capability %s: " "${cap}"
+    if getpcaps 0 2>&1 | grep -q "${cap}"; then
+        echo "yes"
+        return 0
+    fi
+
+    echo "no"
+    return 1
+}
+
+# 默认不覆盖已有配置；SURICATA_USE_IMAGE_YAML=yes 时只覆盖 suricata.yaml。
+copy_config_from_dist() {
+    local dist_dir="${1:-${CONFIG_DIST_DIR}}"
+    local config_dir="${2:-${CONFIG_DIR}}"
+    local src filename dst force
+
+    for src in "${dist_dir}"/*; do
         [[ -e "${src}" ]] || continue
         filename=$(basename "${src}")
-        dst="/etc/suricata/${filename}"
-
+        dst="${config_dir}/${filename}"
+        force=no
         if [[ "${filename}" = "suricata.yaml" && "${SURICATA_USE_IMAGE_YAML:-no}" = "yes" ]]; then
-            echo "Refreshing ${dst} from image default (SURICATA_USE_IMAGE_YAML=yes)."
-            cp -af "${src}" "${dst}"
-            continue
+            force=yes
         fi
-
-        if ! test -e "${dst}"; then
-            echo "Creating ${dst} from image default."
-            cp -a "${src}" "${dst}"
-        fi
+        copy_dist_file "${src}" "${dst}" "${force}" "SURICATA_USE_IMAGE_YAML=yes"
     done
 }
 
-ensure_eve_rotate_interval() {
-    local yaml="/etc/suricata/suricata.yaml"
-    local interval="${SURICATA_EVE_ROTATE_INTERVAL:-2h}"
+# 仅补缺失的规则文件，已有文件不覆盖。
+copy_rules_from_dist() {
+    local dist_dir="${1:-${RULES_DIST_DIR}}"
+    local rules_dir="${2:-${RULES_DIR}}"
+    local src filename dst
 
-    [[ "${SURICATA_ENSURE_EVE_ROTATE_INTERVAL:-yes}" = "yes" ]] || return 0
-    [[ -f "${yaml}" ]] || return 0
+    [[ -d "${dist_dir}" ]] || return 0
+    mkdir -p "${rules_dir}"
 
-    if awk '
-        /^[[:space:]]*-[[:space:]]eve-log:/ { in_eve = 1; next }
-        in_eve && /^[[:space:]]*-[[:space:]][[:alnum:]_-]+:/ { in_eve = 0 }
-        in_eve && /^[[:space:]]*rotate-interval:/ { found = 1 }
-        END { exit found ? 0 : 1 }
-    ' "${yaml}"; then
+    for src in "${dist_dir}"/*; do
+        [[ -e "${src}" ]] || continue
+        filename=$(basename "${src}")
+        dst="${rules_dir}/${filename}"
+        copy_dist_file "${src}" "${dst}" "no"
+    done
+}
+
+# SSH 白名单仅在缺失时从镜像复制，已有文件永不覆盖。
+copy_ssh_allowlist_from_dist() {
+    local dist_dir="${1:-${CONFIG_DIST_DIR}}"
+    local config_dir="${2:-${CONFIG_DIR}}"
+    local src="${dist_dir}/iprep/ssh-allow.list"
+    local dst="${config_dir}/iprep/ssh-allow.list"
+
+    [[ -f "${src}" ]] || return 0
+    copy_dist_file "${src}" "${dst}" "no"
+}
+
+# 缺 sys_nice/net_admin 时以 root 运行；否则修正权限并以 suricata 用户启动。
+prepare_run_user() {
+    local run_as_user=yes
+
+    SURICATA_ARGS=()
+
+    if ! check_for_cap sys_nice; then
+        warn "no sys_nice capability, use --cap-add sys_nice"
+        run_as_user=no
+    fi
+    if ! check_for_cap net_admin; then
+        warn "no net_admin capability, use --cap-add net_admin"
+        run_as_user=no
+    fi
+
+    if [[ "${run_as_user}" != "yes" ]]; then
+        warn "running as root due to missing capabilities"
         return 0
     fi
 
-    if grep -q '^[[:space:]]*filename:[[:space:]]*eve.%Y-%m-%d_%H-%M-%S.json' "${yaml}"; then
-        echo "Adding eve-log rotate-interval: ${interval} to ${yaml}."
-        sed -i "/^[[:space:]]*filename:[[:space:]]*eve.%Y-%m-%d_%H-%M-%S.json/a\      rotate-interval: ${interval}" "${yaml}"
-    fi
-}
-
-seed_config_from_dist
-ensure_eve_rotate_interval
-
-# If the first command does not look like argument, assume its a
-# command the user wants to run. Normally I wouldn't do this.
-if [[ $# -gt 0 && "${1:0:1}" != "-" ]]; then
-    exec "$@"
-fi
-
-run_as_user="yes"
-
-check_for_cap() {
-    echo -n "Checking for capability $1: "
-    if getpcaps 0 2>&1 | grep -q "$1"; then
-        echo "yes"
-        return 0
-    else
-        echo "no"
-        return 1
-    fi
-}
-
-if ! check_for_cap sys_nice; then
-    echo "Warning: no sys_nice capability, use --cap-add sys_nice"
-    run_as_user="no"
-fi
-if ! check_for_cap net_admin; then
-    echo "Warning: no net_admin capability, use --cap-add net_admin"
-    run_as_user="no"
-fi
-
-ARGS=()
-
-if [[ "${run_as_user}" != "yes" ]]; then
-    echo "Warning: running as root due to missing capabilities" > /dev/stderr
-else
     fix_perms
-    ARGS=(--user suricata --group suricata)
-fi
+    SURICATA_ARGS=(--user "${SURICATA_USER}" --group "${SURICATA_USER}")
+}
 
-# run helper processes
-if [[ "$ENABLE_CRON" == "yes" ]]; then
-    crond
-fi
+main() {
+    copy_config_from_dist
+    copy_ssh_allowlist_from_dist
+    copy_rules_from_dist
 
-# run primary process
-exec /usr/bin/suricata "${ARGS[@]}" "$@"
+    # Docker 惯例：首参不是 Suricata 选项时，执行该命令而不启动引擎。
+    if [[ $# -gt 0 && "${1:0:1}" != "-" ]]; then
+        exec "$@"
+    fi
+
+    prepare_run_user
+
+    if [[ "${ENABLE_CRON:-}" = "yes" ]]; then
+        crond
+    fi
+
+    exec "${SURICATA_BIN}" "${SURICATA_ARGS[@]}" "$@"
+}
+
+main "$@"
