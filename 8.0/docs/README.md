@@ -96,7 +96,13 @@ bash scripts/build-single-layer-image.sh
 
 ### `scripts/run-suricata-docker.sh`
 
-启动 Suricata 容器。容器使用宿主机网络命名空间，抓包网卡必须通过 `CAPTURE_IFACES` 或兼容变量 `CAPTURE_IFACE` 显式指定。
+启动 Suricata 容器。容器使用宿主机网络命名空间，抓包网卡默认使用 `eth1 eth2`，也可以通过 `CAPTURE_IFACES` 或兼容变量 `CAPTURE_IFACE` 覆盖。
+
+默认网口启动：
+
+```bash
+./scripts/run-suricata-docker.sh
+```
 
 单网口启动：
 
@@ -120,15 +126,23 @@ CAPTURE_IFACES="eth1 eth2 eth3" \
 CAPTURE_IFACES=eth1,eth2,eth3 ./scripts/run-suricata-docker.sh
 ```
 
+默认启动不加载产品规则，入口脚本会使用镜像内预生成的无规则配置
+`/etc/suricata.dist/suricata-no-rules.yaml`，并跳过规则目录补齐。需要恢复原有规则加载行为时显式设置：
+
+```bash
+SURICATA_LOAD_RULES=yes CAPTURE_IFACES=eth1 ./scripts/run-suricata-docker.sh
+```
+
 常用环境变量：
 
 | 变量 | 说明 |
 |------|------|
 | `SURICATA_IMAGE` | 启动使用的镜像，默认 `suricata:8.0.4-arm64-offline` |
-| `CAPTURE_IFACES` | 抓包网卡列表，支持空格或逗号分隔 |
+| `CAPTURE_IFACES` | 抓包网卡列表，支持空格或逗号分隔，默认 `eth1 eth2` |
 | `CAPTURE_IFACE` | 旧版单网口变量，保留兼容 |
 | `CONTAINER_NAME` | 容器名，默认 `suricata` |
 | `SURICATA_USE_IMAGE_YAML` | 是否用镜像内默认配置覆盖宿主机配置，默认 `no` |
+| `SURICATA_LOAD_RULES` | 是否在启动时加载并补齐规则，默认 `no`；设为 `yes` 时使用 `suricata.yaml` 中的 `rule-files` |
 
 ### `scripts/stop-suricata-docker.sh`
 

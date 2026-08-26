@@ -12,6 +12,8 @@ readonly LOG_DIR=/var/log/suricata
 readonly RUN_DIR=/var/run/suricata
 readonly SURICATA_USER=suricata
 readonly SURICATA_BIN=/usr/bin/suricata
+readonly SURICATA_LOAD_RULES="${SURICATA_LOAD_RULES:-no}"
+readonly SURICATA_NO_RULES_CONFIG="${CONFIG_DIST_DIR}/suricata-no-rules.yaml"
 
 SURICATA_ARGS=()
 
@@ -125,6 +127,25 @@ copy_ssh_allowlist_from_dist() {
     copy_dist_file "${src}" "${dst}" "no"
 }
 
+replace_config_arg() {
+    local config_path="$1"
+    shift
+    local out=()
+    local seen=no
+    while (($#)); do
+        if [[ "$1" = "-c" && $# -gt 1 ]]; then
+            out+=(-c "${config_path}")
+            shift 2
+            seen=yes
+            continue
+        fi
+        out+=("$1")
+        shift
+    done
+    [[ "${seen}" = "yes" ]] || out+=(-c "${config_path}")
+    printf '%s\0' "${out[@]}"
+}
+
 # 缺 sys_nice/net_admin 时以 root 运行；否则修正权限并以 suricata 用户启动。
 prepare_run_user() {
     local run_as_user=yes
@@ -150,9 +171,17 @@ prepare_run_user() {
 }
 
 main() {
+    local suricata_config="${CONFIG_DIR}/suricata.yaml"
+    local suricata_cmd=()
+
     copy_config_from_dist
     copy_ssh_allowlist_from_dist
-    copy_rules_from_dist
+
+    if [[ "${SURICATA_LOAD_RULES}" = "yes" ]]; then
+        copy_rules_from_dist
+    else
+        suricata_config="${SURICATA_NO_RULES_CONFIG}"
+    fi
 
     # Docker 惯例：首参不是 Suricata 选项时，执行该命令而不启动引擎。
     if [[ $# -gt 0 && "${1:0:1}" != "-" ]]; then
@@ -160,6 +189,9 @@ main() {
     fi
 
     prepare_run_user
+
+    mapfile -d '' -t suricata_cmd < <(replace_config_arg "${suricata_config}" "$@")
+    set -- "${suricata_cmd[@]}"
 
     if [[ "${ENABLE_CRON:-}" = "yes" ]]; then
         crond

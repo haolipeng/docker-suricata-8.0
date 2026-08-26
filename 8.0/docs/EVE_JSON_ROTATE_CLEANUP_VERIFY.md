@@ -330,13 +330,13 @@ docker inspect "${CONTAINER}" --format '{{json .Args}}'
 
 | 项目 | 结果 | 证据/备注 |
 |------|------|-----------|
-| 容器运行状态 |  |  |
-| pcap 文件存在 |  |  |
-| pcap 持续回放 |  |  |
-| EVE 生成 |  |  |
-| MMS 识别 |  |  |
-| EVE JSON 轮转 |  |  |
-| 过期 EVE 自动清理 |  |  |
-| 最新 EVE 保留 |  |  |
-| EVE stats 事件 |  | 默认配置未启用 EVE stats，正常情况下不会出现 |
-| 配置恢复 |  |  |
+| 容器运行状态 | 通过 | 2026-08-25 20:35:48 使用 `suricata:8.0.4-amd64-offline` 启动，参数为 `["-i","ens33","-c","/etc/suricata/suricata.yaml"]`，环境变量包含 `ENABLE_CRON=yes`；恢复后容器仍为 `Up`。 |
+| pcap 文件存在 | 通过 | 文档列出的 16 个 pcap 文件均存在；`tcpreplay` 为 `/usr/bin/tcpreplay`，`jq` 为 `/usr/bin/jq`。 |
+| pcap 持续回放 | 通过 | 按用户要求将回放速率提高为 `tcpreplay --pps=200`；2026-08-25 20:40:56 至 20:51:01 持续回放约 605 秒。各 pcap 输出 `Successful packets` 均大于 0，`Failed packets` 均为 0。 |
+| EVE 生成 | 通过 | 生成非空 EVE 文件，例如 `eve.2026-08-25_20-51-02.json`，大小 27513 bytes；事件类型包含 `flow`、`http`、`stats`。 |
+| MMS 识别 | 通过 | `eve.2026-08-25_20-51-02.json` 中匹配到 4 条 `app_proto=iec61850-mms` 记录，例如 `172.20.4.109:60026 -> 172.20.4.94:102`、`10.10.10.1:49152 -> 10.10.10.2:102`、`127.0.0.1:45298 -> 127.0.0.1:102`。 |
+| EVE JSON 轮转 | 通过 | 临时配置 `rotate-interval: 1m` 后生成多个按时间命名的轮转文件；清理前可见 `eve.2026-08-25_20-48-51.json`、`eve.2026-08-25_20-50-02.json`、`eve.2026-08-25_20-51-02.json`。 |
+| 过期 EVE 自动清理 | 通过 | 清理脚本临时设置 `KEEP_MINUTES="${SURICATA_JSON_KEEP_MINUTES:-2}"`，cron 临时设置为每分钟执行；日志显示 20:45 至 20:53 每分钟持续 `deleted=1`，20:53 后 `find ... -mmin +2` 无输出。 |
+| 最新 EVE 保留 | 通过 | 20:53 清理后仍保留非空最新文件：`eve.2026-08-25_20-51-02.json` 27513 bytes、`eve.2026-08-25_20-52-03.json` 20654 bytes、`eve.2026-08-25_20-53-03.json` 2638 bytes。 |
+| EVE stats 事件 | 通过 | 本次测试中出现 1 条 `stats` 事件，位于 `eve.2026-08-25_20-51-02.json`；其中 `app_layer.flow.iec61850-mms=6`、`app_layer.tx.iec61850-mms=870`。 |
+| 配置恢复 | 通过 | 已恢复原始 cron：`*/10 * * * * root /usr/local/bin/suricata-json-cleanup ...`；`KEEP_MINUTES` 恢复为 `"$((KEEP_DAYS * 1440))"`；`suricata -T` 通过，容器重启后继续运行且参数仍包含 `-i ens33`。 |

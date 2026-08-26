@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
-# 启动 Suricata 容器。CAPTURE_IFACES 可指定一个或多个网口。
+# 启动 Suricata 容器。CAPTURE_IFACES 可指定一个或多个网口，默认 eth1 eth2。
 set -euo pipefail
 
-# 可通过环境变量覆盖镜像名和容器名；抓包网卡必须显式指定，避免误抓默认网卡。
+# 可通过环境变量覆盖镜像名、容器名和抓包网卡。
 # CAPTURE_IFACES 支持一个网口、空格分隔的多个网口，或逗号分隔的多个网口。
 SURICATA_IMAGE="${SURICATA_IMAGE:-suricata:8.0.4-arm64-offline}"
 # CAPTURE_IFACE 是旧版单网口变量，保留兼容；新部署统一使用 CAPTURE_IFACES。
-CAPTURE_IFACES="${CAPTURE_IFACES:-${CAPTURE_IFACE:-}}"
+CAPTURE_IFACES="${CAPTURE_IFACES:-${CAPTURE_IFACE:-eth1 eth2}}"
 CONTAINER_NAME="${CONTAINER_NAME:-suricata}"
 
 # 启动前先做本地检查，尽早暴露镜像缺失或网卡名错误。
-[[ -n "${CAPTURE_IFACES}" ]] || { echo "error: CAPTURE_IFACES required (e.g. CAPTURE_IFACES=eth1 or CAPTURE_IFACES='eth1 eth2')" >&2; exit 1; }
 docker image inspect "${SURICATA_IMAGE}" >/dev/null 2>&1 || { echo "error: image not found: ${SURICATA_IMAGE}" >&2; exit 1; }
 
 CAPTURE_IFACES_NORMALIZED="${CAPTURE_IFACES//,/ }"
@@ -26,9 +25,11 @@ done
 # 固定使用宿主机目录持久化 Suricata 的日志、运行状态、运行时文件、配置和产品规则。
 # 产品规则挂到 /usr/share/suricata-docker/rules，不在 /var/lib 下管理。
 # 配置默认以宿主机 /etc/suricata-docker 为准：改 suricata.yaml 后 docker restart 即生效。
-# 规则文件改完后 USR2 热加载即可；脚本会 docker rm -f 再建容器，但规则在宿主机挂载上不会丢。
+# 默认不加载规则，也不会补齐宿主机规则目录；SURICATA_LOAD_RULES=yes 时恢复规则加载与补齐。
+# 规则文件启用后改完可 USR2 热加载；脚本会 docker rm -f 再建容器，但规则在宿主机挂载上不会丢。
 # 若要用镜像内默认 suricata.yaml 覆盖宿主机文件，启动前 export SURICATA_USE_IMAGE_YAML=yes。
 SURICATA_USE_IMAGE_YAML="${SURICATA_USE_IMAGE_YAML:-no}"
+SURICATA_LOAD_RULES="${SURICATA_LOAD_RULES:-no}"
 mkdir -p /var/log/suricata-docker /var/lib/suricata-docker /var/run/suricata-docker \
     /etc/suricata-docker /usr/share/suricata-docker/rules
 
@@ -69,6 +70,7 @@ docker run -d \
     -v /usr/share/suricata-docker/rules:/usr/share/suricata/rules \
     -e ENABLE_CRON=yes \
     -e "SURICATA_USE_IMAGE_YAML=${SURICATA_USE_IMAGE_YAML}" \
+    -e "SURICATA_LOAD_RULES=${SURICATA_LOAD_RULES}" \
     "${SURICATA_IMAGE}" \
     "${SURICATA_IFACE_ARGS[@]}" \
     -c /etc/suricata/suricata.yaml

@@ -189,8 +189,15 @@ RUN if [ "${OFFLINE}" != "1" ]; then suricata-update update-sources; fi
 
 # 以suricata用户运行 Suricata；数据目录归suricata用户所有。
 # /etc/suricata.dist 保存镜像内默认配置，供docker-entrypoint.sh在首次启动时恢复或对比。
+# /etc/suricata.dist/suricata-no-rules.yaml 是默认启动用的无规则配置。
 # /usr/share/suricata/rules.dist 保存产品规则备份；规则目录被宿主机挂载遮住后仍能从这里填充。
 RUN useradd --system --create-home suricata && \
+        awk '\
+            /^[[:space:]]*rule-files:[[:space:]]*$/ { print "rule-files: []"; skip=1; next } \
+            skip && /^[[:space:]]*-/ { next } \
+            skip && /^[^[:space:]]/ { skip=0 } \
+            { print } \
+        ' /etc/suricata/suricata.yaml > /etc/suricata/suricata-no-rules.yaml && \
         chown -R suricata:suricata /etc/suricata && \
         chown -R suricata:suricata /var/log/suricata && \
         chown -R suricata:suricata /var/lib/suricata && \
