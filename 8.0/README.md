@@ -108,17 +108,26 @@ bash scripts/build-single-layer-image.sh
 
 ```bash
 SURICATA_IMAGE=suricata:8.0.4-amd64-offline \
-CAPTURE_IFACES=eth1 \
-./scripts/run-suricata-docker.sh
+CAPTURE_IFACES=eth1 ./scripts/run-suricata-docker.sh
 ```
 
 多网口启动：
 
 ```bash
 SURICATA_IMAGE=suricata:8.0.4-amd64-offline \
-CAPTURE_IFACES="eth1 eth2 eth3" \
-./scripts/run-suricata-docker.sh
+CAPTURE_IFACES="eth1 eth2 eth3" ./scripts/run-suricata-docker.sh
 ```
+
+
+
+在10.107.12.8服务器上启动：
+
+```
+SURICATA_IMAGE=suricata:8.0.4-arm64-single-layer \
+CAPTURE_IFACES=eth3 ./scripts/run-suricata-docker.sh
+```
+
+
 
 也支持逗号分隔：
 
